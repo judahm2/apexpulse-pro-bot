@@ -1,7 +1,7 @@
 {
   "name": "apexatix-pro-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "��#\u0000 \u0000a\u0000p\u0000e\u0000x\u0000a\u0000t\u0000i\u0000x\u0000-\u0000p\u0000r\u0000o\u0000-\u0000b\u0000o\u0000t\u0000\r\u0000 \u0000",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -9,5 +9,13 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/judahm2/apexpulse-pro-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/judahm2/apexpulse-pro-bot/issues"
+  },
+  "homepage": "https://github.com/judahm2/apexpulse-pro-bot#readme"
 }
