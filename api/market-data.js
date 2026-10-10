@@ -30,7 +30,7 @@ export default async function handler(req, res) {
   }
 
   const twelveDataKey = process.env.bc953425eb944deb8bfea02cf10f4b8e;
-  const finnHubApiKey = process.env.FINNHUB_API_KEY;
+  const finnHubApiKey = process.env.db5527hr01qv1n8snelgdb5527hr01qv1n8snem0;
 
   try {
     res.setHeader('Cache-Control', forceRefresh
