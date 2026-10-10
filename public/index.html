@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Apexatix Pro Bot • High-Accuracy Day-Trading Confluence Engine</title>
+    <title>Apexatix Pro Bot • Day-Trading Setup Dashboard</title>
     <!-- Favicon link -->
     <link rel="icon" type="image/x-icon" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
     <!-- Tailwind CSS CDN -->
@@ -50,11 +50,11 @@
             <div class="flex items-center space-x-4">
                 <div class="hidden sm:flex items-center space-x-2 bg-slate-900 border border-borderCol px-3 py-1.5 rounded-lg text-xs text-slate-300">
                     <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span>Strategy: Dual-TF RSI + Trend Filter</span>
+                    <span id="selectedStrategyLabel">Strategy: Dual-TF RSI Confluence</span>
                 </div>
                 <button onclick="window.triggerManualScan()" id="scanBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-lg shadow-blue-600/20 flex items-center space-x-2 cursor-pointer">
                     <i class="fa-solid fa-bolt text-xs"></i>
-                    <span>Run High-Accuracy Scan</span>
+                    <span>Run Setup Scan</span>
                 </button>
             </div>
         </div>
@@ -63,7 +63,20 @@
     <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
 
         <!-- Metrics Overview Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+            <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex flex-col gap-3">
+                <div class="flex items-center space-x-4">
+                    <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                        <i class="fa-solid fa-chart-simple text-xl"></i>
+                    </div>
+                    <p class="text-xs text-slate-400 font-medium">Trading Strategy</p>
+                </div>
+                <select id="strategySelect" onchange="window.changeStrategy(this.value)" class="w-full bg-slate-900 border border-borderCol text-xs text-slate-200 rounded px-2 py-2 focus:outline-none focus:border-blue-500 cursor-pointer">
+                    <option value="rsi">Dual-TF RSI Confluence</option>
+                    <option value="emaMacd">EMA Crossover + MACD</option>
+                    <option value="bollingerRsi">Bollinger Bands + RSI</option>
+                </select>
+            </div>
             <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
                 <div id="statusIconContainer" class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
                     <i id="statusIcon" class="fa-solid fa-circle-check text-xl"></i>
@@ -78,8 +91,8 @@
                     <i class="fa-solid fa-crosshairs text-xl"></i>
                 </div>
                 <div>
-                    <p class="text-xs text-slate-400 font-medium">Day-Trader Filter</p>
-                    <p class="text-lg font-bold text-blue-400">Strict Confluence</p>
+                    <p id="strategyDescriptionLabel" class="text-xs text-slate-400 font-medium">Day-Trader Filter</p>
+                    <p id="strategyDescription" class="text-lg font-bold text-blue-400">Strict Confluence</p>
                 </div>
             </div>
             <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
@@ -88,7 +101,7 @@
                 </div>
                 <div>
                     <p class="text-xs text-slate-400 font-medium">Tracked Markets</p>
-                    <p class="text-lg font-bold">5 Assets</p>
+                    <p id="trackedAssetCount" class="text-lg font-bold">5 / 5 Assets</p>
                 </div>
             </div>
             <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
@@ -120,6 +133,10 @@
             </div>
         </div>
 
+        <p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3">
+            Alerts are technical setups for review, not instructions or personalized financial advice. Reference levels are illustrative scenarios only and do not account for spread, slippage, or your risk limits.
+        </p>
+
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
             <div class="px-6 py-4 border-b border-borderCol flex items-center justify-between bg-slate-900/50">
                 <div class="flex items-center space-x-2">
@@ -132,7 +149,7 @@
             </div>
             <div id="consoleLogs" class="p-6 font-mono text-xs text-slate-300 space-y-2 h-64 overflow-y-auto bg-black/40">
                 <div class="text-slate-500">[System] Initializing  Serverless Function with Day-Trader Strategy...</div>
-                <div class="text-slate-500">[System] Rule active: High-probability signals require primary RSI extremes + secondary timeframe confirmation + trend filter alignment.</div>
+                <div class="text-slate-500">[System] RSI setups require closed-candle extremes and secondary timeframe confirmation.</div>
                 <div class="text-emerald-400">[Bot] Scheduled Action scanner initialized successfully.</div>
             </div>
         </div>
@@ -146,14 +163,18 @@
     <script>
         // Multi-asset dataset including precious metals, forex pairs, and crypto
         const assets = [
-            { symbol: 'XAU/USD', name: 'Gold Spot', price: 4136.50, change: '+0.42%', rsi15: 27.5, rsi30: 31.2, rsi45: 35.4, trend: 'BULLISH', color: 'text-amber-400', isCrypto: false },
-            { symbol: 'BTC/USD', name: 'Bitcoin', price: 88450.20, change: '-1.15%', rsi15: 28.1, rsi30: 26.4, rsi45: 24.2, trend: 'BEARISH', color: 'text-orange-400', isCrypto: true },
-            { symbol: 'XAG/USD', name: 'Silver Spot', price: 31.85, change: '+0.89%', rsi15: 72.4, rsi30: 69.8, rsi45: 65.1, trend: 'BULLISH', color: 'text-slate-300', isCrypto: false },
-            { symbol: 'EUR/USD', name: 'Euro / US Dollar', price: 1.0824, change: '+0.15%', rsi15: 24.9, rsi30: 29.1, rsi45: 33.5, trend: 'BULLISH', color: 'text-indigo-400', isCrypto: false },
-            { symbol: 'AUD/USD', name: 'Australian Dollar', price: 0.6542, change: '-0.12%', rsi15: 74.8, rsi30: 71.2, rsi45: 68.9, trend: 'BEARISH', color: 'text-blue-400', isCrypto: false }
+            { symbol: 'XAU/USD', name: 'Gold Spot', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-amber-400', isCrypto: false },
+            { symbol: 'BTC/USD', name: 'Bitcoin', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-orange-400', isCrypto: true },
+            { symbol: 'XAG/USD', name: 'Silver Spot', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-slate-300', isCrypto: false },
+            { symbol: 'EUR/USD', name: 'Euro / US Dollar', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-indigo-400', isCrypto: false },
+            { symbol: 'AUD/USD', name: 'Australian Dollar', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-blue-400', isCrypto: false }
         ];
+        const assetSlots = [...assets, null, null, null, null].slice(0, 5);
+        const publicQuoteSymbols = new Set(['XAU/USD', 'BTC/USD', 'XAG/USD', 'EUR/USD', 'AUD/USD']);
+        let marketDataRequestId = 0;
+        let forcedRefreshInProgress = false;
 
-        // Load current quotes from public APIs; retain the last quote if a provider is unavailable.
+        // Public quote sources keep their existing one-minute refresh schedule.
         async function updateMarketPrices() {
             const requests = [
                 fetch('https://api.gold-api.com/price/XAU').then(response => response.ok ? response.json() : Promise.reject()),
@@ -165,16 +186,137 @@
             const quotes = await Promise.allSettled(requests);
             const prices = quotes.map(result => result.status === 'fulfilled' ? result.value : null);
 
-            if (prices[0]?.price > 0) assets[0].price = prices[0].price;
-            if (prices[1]?.bitcoin?.usd > 0) assets[1].price = prices[1].bitcoin.usd;
-            if (prices[2]?.price > 0) assets[2].price = prices[2].price;
-            if (prices[3]?.rates?.USD > 0) assets[3].price = prices[3].rates.USD;
-            if (prices[4]?.rates?.USD > 0) assets[4].price = prices[4].rates.USD;
+            const updatePrice = (symbol, price) => {
+                const asset = assets.find(item => item.symbol === symbol);
+                if (asset && price > 0) asset.price = price;
+            };
+            updatePrice('XAU/USD', prices[0]?.price);
+            updatePrice('BTC/USD', prices[1]?.bitcoin?.usd);
+            updatePrice('XAG/USD', prices[2]?.price);
+            updatePrice('EUR/USD', prices[3]?.rates?.USD);
+            updatePrice('AUD/USD', prices[4]?.rates?.USD);
+
+            renderAssets();
+        }
+
+        // Closed-candle indicators are refreshed for tracked assets every 15 minutes.
+        async function updateCustomMarketPrices(includeDefaultAssets = false, forceRefresh = false) {
+            if (forcedRefreshInProgress && !forceRefresh) return;
+            const requestId = ++marketDataRequestId;
+            const customAssets = assets.filter(asset => includeDefaultAssets || !publicQuoteSymbols.has(asset.symbol));
+            if (customAssets.length) {
+                try {
+                    const query = new URLSearchParams({
+                        symbols: customAssets.map(asset => asset.symbol).join(','),
+                        cryptoSymbols: customAssets.filter(asset => asset.isCrypto).map(asset => asset.symbol).join(','),
+                        timeframe: selectedTimeframe,
+                        ...(forceRefresh ? { refresh: '1' } : {})
+                    });
+                    let response;
+                    try {
+                        response = await fetch(`/api/market-data?${query}`);
+                    } catch (error) {
+                        throw new Error('Cannot reach the market-data API. Run the dashboard with Vercel (for example, `vercel dev`) or deploy it to Vercel.');
+                    }
+                    const responseText = await response.text();
+                    let payload;
+                    try {
+                        payload = JSON.parse(responseText);
+                    } catch {
+                        if (/forbidden/i.test(responseText)) {
+                            throw new Error(`Market-data API access was denied (HTTP ${response.status}). Confirm the /api/market-data serverless route is deployed and reachable; static preview servers cannot run this API.`);
+                        }
+                        throw new Error(`Market-data API returned a non-JSON response (HTTP ${response.status}). Confirm the /api/market-data serverless route is deployed and reachable.`);
+                    }
+                    if (!response.ok) {
+                        throw new Error(payload.error || `Market-data API request failed (HTTP ${response.status}).`);
+                    }
+                    if (!Array.isArray(payload.results)) {
+                        throw new Error('Market data endpoint returned an invalid response.');
+                    }
+                    if (requestId !== marketDataRequestId) return;
+
+                    const resultsBySymbol = new Map(payload.results.map(result => [result.symbol, result]));
+                    customAssets.forEach(asset => {
+                        const result = resultsBySymbol.get(asset.symbol);
+                        if (!result || result.error || !Number.isFinite(result.price)) {
+                            const error = result?.error || 'No market values were returned for this symbol.';
+                            if (asset.marketDataError !== error) {
+                                logToConsole(`[${asset.symbol}] Market data unavailable: ${error}`, 'error');
+                            }
+                            asset.marketDataError = error;
+                            asset.change = 'Unavailable';
+                            asset.rsi15 = null;
+                            asset.rsi30 = null;
+                            asset.rsi45 = null;
+                            asset.strategyRsi = null;
+                            asset.strategyIndicators = null;
+                            asset.atr = null;
+                            asset.candleClosedAt = null;
+                            asset.dataProvider = null;
+                            return;
+                        }
+
+                        const hadError = asset.marketDataError;
+                        const hadMarketData = Number.isFinite(asset.price);
+                        const previousProvider = asset.dataProvider;
+                        asset.marketDataError = null;
+                        asset.dataProvider = result.provider || 'Twelve Data';
+                        asset.dataTimeframe = selectedTimeframe;
+                        asset.price = result.price;
+                        asset.candleClose = result.candleClose;
+                        asset.currency = result.currency || asset.symbol.split('/').pop() || 'USD';
+                        asset.change = Number.isFinite(result.changePercent)
+                            ? `${result.changePercent >= 0 ? '+' : ''}${result.changePercent.toFixed(2)}%`
+                            : 'N/A';
+                        asset.rsi15 = result.rsi15;
+                        asset.rsi30 = result.rsi30;
+                        asset.rsi45 = result.rsi45;
+                        asset.strategyRsi = selectedTimeframe === '15'
+                            ? result.rsi15
+                            : selectedTimeframe === '30'
+                                ? result.rsi30
+                                : result.rsi45;
+                        asset.strategyIndicators = result.strategyIndicators;
+                        asset.atr = result.atr;
+                        asset.candleClosedAt = result.candleClosedAt;
+                        asset.dataUpdatedAt = Date.now();
+                        if (hadError) {
+                            logToConsole(`[${asset.symbol}] Live market values are available again.`, 'success');
+                        } else if (!hadMarketData) {
+                            logToConsole(`[${asset.symbol}] Live market values loaded.`, 'success');
+                        }
+                        if (result.provider && previousProvider !== result.provider) {
+                            logToConsole(`[${asset.symbol}] Using ${result.provider} backup market data.`, 'alert');
+                        }
+                    });
+                } catch (error) {
+                    if (requestId !== marketDataRequestId) return;
+                    customAssets.forEach(asset => {
+                        const message = error instanceof Error ? error.message : 'Unable to retrieve market data.';
+                        if (asset.marketDataError !== message) {
+                            logToConsole(`[${asset.symbol}] Market data unavailable: ${message}`, 'error');
+                        }
+                        asset.marketDataError = message;
+                        asset.change = 'Unavailable';
+                        asset.rsi15 = null;
+                        asset.rsi30 = null;
+                        asset.rsi45 = null;
+                        asset.strategyRsi = null;
+                        asset.strategyIndicators = null;
+                        asset.atr = null;
+                        asset.candleClosedAt = null;
+                        asset.dataProvider = null;
+                    });
+                }
+            }
 
             renderAssets();
         }
 
         let selectedTimeframe = '15';
+        let selectedStrategy = 'rsi';
+        let addingAssetSlot = null;
 
         // Check if traditional markets are closed on weekends/holidays
         function checkMarketBreak(isCrypto) {
@@ -192,12 +334,12 @@
         }
 
         function updateGlobalMarketStatus() {
-            const sampleCheck = checkMarketBreak(false);
+            const marketCheck = checkMarketBreak(false);
             const statusText = document.getElementById('marketStatusText');
             const statusIcon = document.getElementById('statusIcon');
             const iconContainer = document.getElementById('statusIconContainer');
 
-            if (sampleCheck.isOnBreak) {
+            if (marketCheck.isOnBreak) {
                 statusText.textContent = 'Market on Break';
                 statusText.className = 'text-lg font-bold text-amber-400';
                 statusIcon.className = 'fa-solid fa-triangle-exclamation text-xl';
@@ -212,41 +354,168 @@
 
         function changeTimeframe(tf) {
             selectedTimeframe = tf;
-            document.getElementById('activeTimeframeBadge').textContent = `Active View: ${tf}m RSI + Confluence`;
-            logToConsole(`Switching day-trading scanner timeframe to ${tf} minutes with multi-confluence filter.`, 'info');
+            assets.forEach(asset => {
+                asset.candleClose = null;
+                asset.candleClosedAt = null;
+                asset.strategyRsi = null;
+                asset.strategyIndicators = null;
+                asset.atr = null;
+            });
+            document.getElementById('activeTimeframeBadge').textContent = selectedStrategy === 'rsi'
+                ? `Active View: ${tf}m RSI + Confluence`
+                : `Active View: ${tf}m ${strategyNames[selectedStrategy]}`;
+            logToConsole(`Switching scanner timeframe to ${tf} minutes with ${strategyNames[selectedStrategy]}.`, 'info');
+            renderAssets();
+            updateCustomMarketPrices(true);
+        }
+
+        const strategyNames = {
+            rsi: 'Dual-TF RSI Confluence',
+            emaMacd: 'EMA Crossover + MACD',
+            bollingerRsi: 'Bollinger Bands + RSI'
+        };
+        const strategyDescriptions = {
+            rsi: ['Day-Trader Filter', 'Strict Confluence'],
+            emaMacd: ['Trend Following', 'EMA 9/21 + MACD'],
+            bollingerRsi: ['Mean Reversion', 'Bands + RSI 14']
+        };
+
+        function changeStrategy(strategy) {
+            if (!Object.hasOwn(strategyNames, strategy)) {
+                logToConsole(`Unknown strategy selected: ${strategy}`, 'error');
+                document.getElementById('strategySelect').value = selectedStrategy;
+                return;
+            }
+
+            selectedStrategy = strategy;
+            document.getElementById('selectedStrategyLabel').textContent = `Strategy: ${strategyNames[strategy]}`;
+            document.getElementById('strategyDescriptionLabel').textContent = strategyDescriptions[strategy][0];
+            document.getElementById('strategyDescription').textContent = strategyDescriptions[strategy][1];
+            document.getElementById('activeTimeframeBadge').textContent = strategy === 'rsi'
+                ? `Active View: ${selectedTimeframe}m RSI + Confluence`
+                : `Active View: ${selectedTimeframe}m ${strategyNames[strategy]}`;
+            logToConsole(`Switching strategy to ${strategyNames[strategy]} on ${selectedTimeframe}-minute candles.`, 'info');
             renderAssets();
         }
 
         /**
-         * PROFESSIONAL DAY-TRADING STRATEGY (DUAL-TIMEFRAME RSI + TREND CONFLUENCE):
-         * 1. Market Break Filter: Automatically pauses alerts if traditional markets are closed.
-         * 2. Momentum Confluence: Requires primary timeframe RSI to hit extreme reversal zones (<30 or >70).
-         * 3. Secondary Timeframe Confirmation: Requires the secondary timeframe to align (below 38 for buys, above 62 for sells).
-         * 4. Trend Direction Filter: Filters out counter-trend whipsaws to maximize win rate for day traders.
+         * RSI setups use closed-candle momentum extremes and secondary-timeframe confirmation.
          */
+        function getDataQuality(asset, tf) {
+            if (asset.marketDataError) {
+                return { valid: false, label: `Data unavailable • ${asset.marketDataError}` };
+            }
+            const closedAt = asset.candleClosedAt;
+            if (!Number.isFinite(closedAt) || !Number.isFinite(asset.dataUpdatedAt)) {
+                return { valid: false, label: 'Waiting for closed-candle data' };
+            }
+
+            const ageMs = Date.now() - closedAt;
+            const staleAfterMs = Number(tf) * 60 * 1000 * 2;
+            if (ageMs < 0 || ageMs > staleAfterMs) {
+                return {
+                    valid: false,
+                    label: `Stale candle • ${new Date(closedAt).toLocaleString()}`
+                };
+            }
+
+            return {
+                valid: true,
+                label: `${asset.dataProvider || 'Market data'} • Closed ${new Date(closedAt).toLocaleString()}`
+            };
+        }
+
         function getDayTradingSignal(asset, tf) {
+            const dataQuality = getDataQuality(asset, tf);
+            if (!dataQuality.valid) {
+                return { text: dataQuality.label.toUpperCase(), style: 'bg-amber-500/10 text-amber-300 border-amber-500/30', raw: 'UNAVAILABLE' };
+            }
+
             const marketBreak = checkMarketBreak(asset.isCrypto);
             if (marketBreak.isOnBreak) {
                 return { text: `MARKET ON BREAK (Paused)`, style: 'bg-amber-500/10 text-amber-400 border-amber-500/30', raw: 'PAUSED' };
             }
+
+            if (selectedStrategy === 'emaMacd') return getEmaMacdSignal(asset, tf);
+            if (selectedStrategy === 'bollingerRsi') return getBollingerRsiSignal(asset, tf);
 
             let primaryRsi = asset.rsi15;
             let secondaryRsi = asset.rsi30;
             if (tf === '30') { primaryRsi = asset.rsi30; secondaryRsi = asset.rsi45; }
             if (tf === '45') { primaryRsi = asset.rsi45; secondaryRsi = asset.rsi30; }
 
+            if (!Number.isFinite(primaryRsi) || !Number.isFinite(secondaryRsi)) {
+                return { text: 'DATA UNAVAILABLE', style: 'bg-slate-800 text-slate-400 border-slate-700', raw: 'UNAVAILABLE' };
+            }
+
             // Strategy Confluence Checks
             const isOversoldConfluent = primaryRsi <= 30 && secondaryRsi <= 38;
             const isOverboughtConfluent = primaryRsi >= 70 && secondaryRsi >= 62;
 
             if (isOversoldConfluent) {
-                return { text: `HIGH-PROBABILITY BUY (${tf}m Confluent)`, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', raw: 'BUY' };
+                return { text: `BULLISH SETUP (${tf}m RSI Confluence)`, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', raw: 'BUY' };
             }
             if (isOverboughtConfluent) {
-                return { text: `HIGH-PROBABILITY SELL (${tf}m Confluent)`, style: 'bg-rose-500/10 text-rose-400 border-rose-500/30', raw: 'SELL' };
+                return { text: `BEARISH SETUP (${tf}m RSI Confluence)`, style: 'bg-rose-500/10 text-rose-400 border-rose-500/30', raw: 'SELL' };
             }
 
             return { text: `FILTERED HOLD (${tf}m No Confluence)`, style: 'bg-slate-800 text-slate-300 border-slate-700', raw: 'HOLD' };
+        }
+
+        function getEmaMacdSignal(asset, tf) {
+            const indicators = asset.strategyIndicators;
+            if (!indicators || !Object.values(indicators).every(Number.isFinite)) {
+                return { text: 'DATA UNAVAILABLE', style: 'bg-slate-800 text-slate-400 border-slate-700', raw: 'UNAVAILABLE' };
+            }
+
+            const crossedUp = indicators.previousEma9 <= indicators.previousEma21 &&
+                indicators.ema9 > indicators.ema21 &&
+                indicators.macd > indicators.macdSignal;
+            const crossedDown = indicators.previousEma9 >= indicators.previousEma21 &&
+                indicators.ema9 < indicators.ema21 &&
+                indicators.macd < indicators.macdSignal;
+
+            if (crossedUp) {
+                return { text: `EMA BULLISH CROSS (${tf}m MACD Confirmed)`, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', raw: 'BUY' };
+            }
+            if (crossedDown) {
+                return { text: `EMA BEARISH CROSS (${tf}m MACD Confirmed)`, style: 'bg-rose-500/10 text-rose-400 border-rose-500/30', raw: 'SELL' };
+            }
+
+            return { text: `WAITING FOR EMA CROSS (${tf}m)`, style: 'bg-slate-800 text-slate-300 border-slate-700', raw: 'HOLD' };
+        }
+
+        function getBollingerRsiSignal(asset, tf) {
+            const indicators = asset.strategyIndicators;
+            if (!indicators || !Number.isFinite(asset.price) ||
+                !Number.isFinite(asset.strategyRsi) ||
+                !Number.isFinite(indicators.lowerBand) ||
+                !Number.isFinite(indicators.upperBand)) {
+                return { text: 'DATA UNAVAILABLE', style: 'bg-slate-800 text-slate-400 border-slate-700', raw: 'UNAVAILABLE' };
+            }
+
+            if (asset.candleClose <= indicators.lowerBand && asset.strategyRsi <= 30) {
+                return { text: `LOWER BAND + OVERSOLD (${tf}m)`, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', raw: 'BUY' };
+            }
+            if (asset.candleClose >= indicators.upperBand && asset.strategyRsi >= 70) {
+                return { text: `UPPER BAND + OVERBOUGHT (${tf}m)`, style: 'bg-rose-500/10 text-rose-400 border-rose-500/30', raw: 'SELL' };
+            }
+
+            return { text: `WAITING FOR BAND + RSI (${tf}m)`, style: 'bg-slate-800 text-slate-300 border-slate-700', raw: 'HOLD' };
+        }
+
+        function getReferencePlan(asset, signal) {
+            if (!['BUY', 'SELL'].includes(signal.raw) ||
+                !Number.isFinite(asset.candleClose) ||
+                !Number.isFinite(asset.atr) ||
+                asset.atr <= 0) return null;
+
+            const riskDistance = asset.atr * 1.5;
+            const entry = asset.candleClose;
+            const invalidation = signal.raw === 'BUY' ? entry - riskDistance : entry + riskDistance;
+            const target = signal.raw === 'BUY' ? entry + (riskDistance * 2) : entry - (riskDistance * 2);
+            const format = value => value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
+            return { entry: format(entry), invalidation: format(invalidation), target: format(target) };
         }
 
         function renderAssets() {
@@ -254,45 +523,178 @@
             const grid = document.getElementById('assetGrid');
             grid.innerHTML = '';
 
-            assets.forEach(asset => {
+            assetSlots.forEach((asset, index) => {
+                if (!asset) {
+                    const placeholder = document.createElement('div');
+                    if (addingAssetSlot === index) {
+                        placeholder.className = 'bg-cardBg border border-dashed border-blue-500/50 p-5 rounded-2xl min-h-[280px] flex flex-col justify-center';
+                        placeholder.innerHTML = `
+                            <form data-asset-form class="space-y-4">
+                                <label class="block text-sm font-medium text-slate-200" for="newAssetSymbol">Add an asset</label>
+                                <input id="newAssetSymbol" name="symbol" type="text" maxlength="20" required autocomplete="off" placeholder="Symbol, e.g. ETH/USD" class="w-full bg-slate-900 border border-borderCol rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500">
+                                <label class="block text-xs text-slate-400" for="newAssetName">Display name (optional)</label>
+                                <input id="newAssetName" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Defaults to symbol" class="w-full bg-slate-900 border border-borderCol rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500">
+                                <label class="block text-xs text-slate-400" for="newAssetType">Market type</label>
+                                <select id="newAssetType" name="type" class="w-full bg-slate-900 border border-borderCol rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500">
+                                    <option value="traditional">Traditional</option>
+                                    <option value="crypto">Crypto (24/7)</option>
+                                </select>
+                                <p data-form-error role="alert" class="hidden text-xs text-rose-400"></p>
+                                <div class="flex gap-2">
+                                    <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-3 py-2 text-sm font-medium">Add asset</button>
+                                    <button type="button" data-cancel-asset class="px-3 py-2 rounded-lg border border-borderCol text-sm text-slate-300 hover:bg-slate-800">Cancel</button>
+                                </div>
+                            </form>
+                        `;
+                        window.setTimeout(() => document.getElementById('newAssetSymbol')?.focus(), 0);
+                    } else {
+                        placeholder.className = 'min-h-[280px]';
+                        placeholder.innerHTML = `
+                            <button type="button" data-add-asset="${index}" class="w-full h-full min-h-[280px] rounded-2xl border border-dashed border-borderCol bg-cardBg/40 text-slate-400 hover:text-blue-400 hover:border-blue-500/50 hover:bg-cardBg transition-all flex flex-col items-center justify-center gap-3">
+                                <span class="w-12 h-12 rounded-full border border-current flex items-center justify-center text-2xl" aria-hidden="true">+</span>
+                                <span class="text-sm font-medium">Add asset</span>
+                            </button>
+                        `;
+                    }
+                    grid.appendChild(placeholder);
+                    return;
+                }
+
                 const signalObj = getDayTradingSignal(asset, selectedTimeframe);
                 const marketBreak = checkMarketBreak(asset.isCrypto);
+                const changeClass = asset.change.startsWith('+')
+                    ? 'text-emerald-400 bg-emerald-500/10'
+                    : asset.change.startsWith('-')
+                        ? 'text-rose-400 bg-rose-500/10'
+                        : 'text-slate-400 bg-slate-500/10';
 
                 const card = document.createElement('div');
-                card.className = 'bg-cardBg border border-borderCol p-5 rounded-2xl hover:border-slate-700 transition-all space-y-4';
+                const dataQuality = getDataQuality(asset, selectedTimeframe);
+                const referencePlan = getReferencePlan(asset, signalObj);
+                card.className = 'relative bg-cardBg border border-borderCol p-5 rounded-2xl hover:border-slate-700 transition-all space-y-4';
                 card.innerHTML = `
-                    <div class="flex items-center justify-between">
+                    <button type="button" data-remove-asset="${index}" aria-label="Remove ${escapeHtml(asset.symbol)}" title="Remove asset" class="absolute top-3 right-3 w-7 h-7 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors">
+                        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                    </button>
+                    <div class="flex items-center justify-between pr-8">
                         <div>
-                            <span class="font-bold text-base ${asset.color}">${asset.symbol}</span>
-                            <p class="text-xs text-slate-400">${asset.name}</p>
+                            <span class="font-bold text-base ${asset.color}">${escapeHtml(asset.symbol)}</span>
+                            <p class="text-xs text-slate-400">${escapeHtml(asset.name)}</p>
                         </div>
-                        <span class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : (asset.change.startsWith('+') ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10')}">${marketBreak.isOnBreak ? 'Market Break' : asset.change}</span>
+                        <span title="${escapeHtml(asset.marketDataError || (asset.dataProvider ? `${asset.dataProvider} • ${asset.dataTimeframe || selectedTimeframe}-minute change` : (!publicQuoteSymbols.has(asset.symbol) ? `${selectedTimeframe}-minute change` : 'Market change')))}" class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : asset.marketDataError ? 'text-rose-400 bg-rose-500/10' : changeClass}">${marketBreak.isOnBreak ? 'Market Break' : escapeHtml(asset.change)}</span>
                     </div>
                     <div class="space-y-1">
-                        <div class="text-2xl font-bold tracking-tight">$${asset.price >= 1000 ? asset.price.toLocaleString() : asset.price.toFixed(4)}</div>
+                        <div class="text-2xl font-bold tracking-tight">${Number.isFinite(asset.price) ? `${asset.currency === 'USD' || !asset.currency ? '$' : ''}${asset.price.toLocaleString(undefined, { maximumSignificantDigits: 8 })}${asset.currency && asset.currency !== 'USD' ? ` ${escapeHtml(asset.currency)}` : ''}` : '—'}</div>
+                        <p class="text-[10px] leading-relaxed ${dataQuality.valid ? 'text-slate-500' : 'text-amber-300'}">${escapeHtml(dataQuality.label)}${Number.isFinite(asset.candleClose) ? ` • Candle close ${asset.candleClose.toLocaleString(undefined, { maximumSignificantDigits: 8 })}` : ''}</p>
                         <div class="space-y-1.5 pt-2 border-t border-borderCol/60">
                             <div class="flex items-center justify-between text-xs">
                                 <span class="text-slate-400">15m RSI:</span>
-                                <span class="font-mono font-semibold ${asset.rsi15 <= 30 ? 'text-emerald-400' : asset.rsi15 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${asset.rsi15}</span>
+                                <span class="font-mono font-semibold ${Number.isFinite(asset.rsi15) && asset.rsi15 <= 30 ? 'text-emerald-400' : Number.isFinite(asset.rsi15) && asset.rsi15 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${Number.isFinite(asset.rsi15) ? asset.rsi15.toFixed(1) : '—'}</span>
                             </div>
                             <div class="flex items-center justify-between text-xs">
                                 <span class="text-slate-400">30m RSI:</span>
-                                <span class="font-mono font-semibold ${asset.rsi30 <= 30 ? 'text-emerald-400' : asset.rsi30 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${asset.rsi30}</span>
+                                <span class="font-mono font-semibold ${Number.isFinite(asset.rsi30) && asset.rsi30 <= 30 ? 'text-emerald-400' : Number.isFinite(asset.rsi30) && asset.rsi30 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${Number.isFinite(asset.rsi30) ? asset.rsi30.toFixed(1) : '—'}</span>
                             </div>
                             <div class="flex items-center justify-between text-xs">
                                 <span class="text-slate-400">45m RSI:</span>
-                                <span class="font-mono font-semibold ${asset.rsi45 <= 30 ? 'text-emerald-400' : asset.rsi45 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${asset.rsi45}</span>
+                                <span class="font-mono font-semibold ${Number.isFinite(asset.rsi45) && asset.rsi45 <= 30 ? 'text-emerald-400' : Number.isFinite(asset.rsi45) && asset.rsi45 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${Number.isFinite(asset.rsi45) ? asset.rsi45.toFixed(1) : '—'}</span>
                             </div>
                         </div>
                     </div>
                     <div class="pt-1">
                         <div class="text-center py-1.5 px-3 rounded-xl border text-xs font-semibold ${signalObj.style}">
-                            ${signalObj.text}
+                            ${escapeHtml(signalObj.text)}
                         </div>
+                        ${referencePlan ? `<div class="text-[10px] text-slate-400 text-center mt-2">Illustrative reference only • Entry ${referencePlan.entry} • Invalidation ${referencePlan.invalidation} • 2R scenario ${referencePlan.target}</div>` : ''}
                     </div>
                 `;
                 grid.appendChild(card);
             });
+
+            document.getElementById('trackedAssetCount').textContent = `${assets.length} / 5 Assets`;
+        }
+
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, character => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            })[character]);
+        }
+
+        function handleAssetGridClick(event) {
+            const removeButton = event.target.closest('[data-remove-asset]');
+            if (removeButton) {
+                const slot = Number(removeButton.dataset.removeAsset);
+                const asset = assetSlots[slot];
+                if (!asset) return;
+                assetSlots[slot] = null;
+                assets.splice(assets.indexOf(asset), 1);
+                renderAssets();
+                logToConsole(`${asset.symbol} removed from tracked assets.`, 'info');
+                return;
+            }
+
+            const addButton = event.target.closest('[data-add-asset]');
+            if (addButton) {
+                addingAssetSlot = Number(addButton.dataset.addAsset);
+                renderAssets();
+                return;
+            }
+
+            if (event.target.closest('[data-cancel-asset]')) {
+                addingAssetSlot = null;
+                renderAssets();
+            }
+        }
+
+        function handleAssetFormSubmit(event) {
+            const form = event.target.closest('[data-asset-form]');
+            if (!form) return;
+
+            event.preventDefault();
+            const formData = new FormData(form);
+            const symbol = String(formData.get('symbol')).trim().toUpperCase();
+            const name = String(formData.get('name')).trim() || symbol;
+            const error = form.querySelector('[data-form-error]');
+            const symbolInput = form.elements.namedItem('symbol');
+
+            if (!/^[A-Z0-9][A-Z0-9./_-]{0,19}$/.test(symbol)) {
+                error.textContent = 'Enter a symbol using letters, numbers, dots, slashes, underscores, or hyphens.';
+                error.classList.remove('hidden');
+                symbolInput.focus();
+                return;
+            }
+
+            if (assets.some(asset => asset.symbol.toUpperCase() === symbol)) {
+                error.textContent = 'That asset is already being tracked.';
+                error.classList.remove('hidden');
+                symbolInput.focus();
+                return;
+            }
+
+            const asset = {
+                symbol,
+                name,
+                price: null,
+                change: 'Loading...',
+                rsi15: null,
+                rsi30: null,
+                rsi45: null,
+                trend: 'UNKNOWN',
+                color: 'text-sky-400',
+                isCrypto: formData.get('type') === 'crypto',
+                marketDataError: null,
+                dataProvider: null
+            };
+            assetSlots[addingAssetSlot] = asset;
+            assets.push(asset);
+            addingAssetSlot = null;
+            renderAssets();
+            logToConsole(`${symbol} added. Loading current market values...`, 'info');
+            updateCustomMarketPrices(false);
         }
 
         function logToConsole(message, type = 'info') {
@@ -311,42 +713,58 @@
             consoleBox.scrollTop = consoleBox.scrollHeight;
         }
 
-        function triggerManualScan() {
+        async function triggerManualScan() {
             const btn = document.getElementById('scanBtn');
+            const timeframeSelect = document.getElementById('timeframeSelect');
+            const strategySelect = document.getElementById('strategySelect');
+            const grid = document.getElementById('assetGrid');
+            const scanTimeframe = selectedTimeframe;
+            const scanStrategy = selectedStrategy;
             btn.disabled = true;
-            btn.innerHTML = `<i class="fa-solid fa-spinner animate-spin text-xs"></i><span>Running Day-Trading Scan (${selectedTimeframe}m)...</span>`;
-            
-            logToConsole(`Executing Day-Trading Strategy Scan for timeframe: ${selectedTimeframe} minutes across all 5 assets...`, 'info');
+            timeframeSelect.disabled = true;
+            strategySelect.disabled = true;
+            grid.inert = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner animate-spin text-xs"></i><span>Refreshing candles (${scanTimeframe}m)...</span>`;
 
-            setTimeout(() => {
-                logToConsole('GET https://your-project.vercel.app/api/bot - Status 200 OK', 'success');
-                logToConsole('Evaluating multi-timeframe RSI confluence & market break conditions.', 'info');
-                
+            logToConsole(`Refreshing closed-candle data before scanning ${assets.length} tracked asset${assets.length === 1 ? '' : 's'}...`, 'info');
+            forcedRefreshInProgress = true;
+            try {
+                await updateCustomMarketPrices(true, true);
+                logToConsole(`Evaluating ${strategyNames[scanStrategy]} setups using refreshed closed candles.`, 'info');
                 assets.forEach(asset => {
                     const mb = checkMarketBreak(asset.isCrypto);
                     if (mb.isOnBreak) {
                         logToConsole(`⏸️ [${asset.symbol}] Market on break. Signal suppressed to prevent false alerts.`, 'alert');
                     } else {
-                        const sig = getDayTradingSignal(asset, selectedTimeframe);
-                        if (sig.raw === 'BUY') {
-                            logToConsole(`🚨 [${asset.symbol}] DAY-TRADING BUY SIGNAL: Dual-TF Confluence Verified (${selectedTimeframe}m Engine). Alert dispatched!`, 'success');
+                        const sig = getDayTradingSignal(asset, scanTimeframe);
+                        if (sig.raw === 'UNAVAILABLE') {
+                            logToConsole(`[${asset.symbol}] Scan skipped: ${getDataQuality(asset, scanTimeframe).label}.`, 'alert');
+                        } else if (sig.raw === 'BUY') {
+                            const plan = getReferencePlan(asset, sig);
+                            logToConsole(`[${asset.symbol}] Bullish setup detected (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Illustrative reference: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R scenario ${plan.target}.` : 'ATR reference levels unavailable.'}`, 'success');
                         } else if (sig.raw === 'SELL') {
-                            logToConsole(`🚨 [${asset.symbol}] DAY-TRADING SELL SIGNAL: Dual-TF Confluence Verified (${selectedTimeframe}m Engine). Alert dispatched!`, 'error');
+                            const plan = getReferencePlan(asset, sig);
+                            logToConsole(`[${asset.symbol}] Bearish setup detected (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Illustrative reference: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R scenario ${plan.target}.` : 'ATR reference levels unavailable.'}`, 'alert');
                         } else {
-                            logToConsole(`🛡️ [${asset.symbol}] HOLD: Filtered out (Insufficient secondary timeframe confluence).`, 'info');
+                            logToConsole(`[${asset.symbol}] No setup under the selected strategy (${scanTimeframe}m).`, 'info');
                         }
                     }
                 });
 
-                // Fixed left-hand side assignment error
                 const lastRunElem = document.getElementById('lastRunTime');
                 if (lastRunElem) {
                     lastRunElem.textContent = 'Just now';
                 }
-                
+            } catch (error) {
+                logToConsole(`Scan could not complete: ${error.message || 'Market data refresh failed.'}`, 'error');
+            } finally {
+                forcedRefreshInProgress = false;
+                grid.inert = false;
+                timeframeSelect.disabled = false;
+                strategySelect.disabled = false;
                 btn.disabled = false;
-                btn.innerHTML = `<i class="fa-solid fa-bolt text-xs"></i><span>Run High-Accuracy Scan</span>`;
-            }, 1200);
+                btn.innerHTML = `<i class="fa-solid fa-bolt text-xs"></i><span>Run Setup Scan</span>`;
+            }
         }
 
         function clearLogs() {
@@ -356,18 +774,25 @@
         // Explicitly attach functions to window for global access in preview iframes
         window.triggerManualScan = triggerManualScan;
         window.changeTimeframe = changeTimeframe;
+        window.changeStrategy = changeStrategy;
         window.clearLogs = clearLogs;
+
+        const assetGrid = document.getElementById('assetGrid');
+        assetGrid.addEventListener('click', handleAssetGridClick);
+        assetGrid.addEventListener('submit', handleAssetFormSubmit);
 
         window.onload = function() {
             renderAssets();
             updateMarketPrices();
+            updateCustomMarketPrices(true);
             window.setInterval(updateMarketPrices, 60000);
+            window.setInterval(() => updateCustomMarketPrices(true), 15 * 60 * 1000);
             logToConsole('Apexatix Pro Bot initialized with Advanced Day-Trading Strategy.', 'success');
-            const sample = checkMarketBreak(false);
-            if (sample.isOnBreak) {
+            const initialMarketCheck = checkMarketBreak(false);
+            if (initialMarketCheck.isOnBreak) {
                 logToConsole('⚠️ Notice: Traditional forex/metals markets are currently on weekend break. Alerts automatically suppressed.', 'alert');
             } else {
-                logToConsole('Market session active. High-accuracy dual-timeframe day-trading scanning enabled.', 'success');
+                logToConsole('Market session active. Closed-candle RSI confluence scanning enabled.', 'success');
             }
         };
     </script>

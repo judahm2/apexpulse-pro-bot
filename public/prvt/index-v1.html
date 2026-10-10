@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apexatix Pro Bot • High-Accuracy Day-Trading Confluence Engine</title>
+    <!-- Favicon link -->
+    <link rel="icon" type="image/x-icon" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkBg: '#0b0f19',
+                        cardBg: '#111827',
+                        borderCol: '#1f2937',
+                        accentBlue: '#3b82f6',
+                        accentGreen: '#10b981',
+                        accentRed: '#ef4444'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .glow { box-shadow: 0 0 20px rgba(59, 130, 246, 0.15); }
+    </style>
+</head>
+<body class="bg-darkBg text-slate-100 min-h-screen flex flex-col antialiased selection:bg-blue-500 selection:text-white">
+
+    <header class="border-b border-borderCol bg-cardBg/50 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center glow">
+                    <img width="893" height="242" src="http://apexatix.com/wp-content/uploads/2026/09/cropped-Apexatix-favcon-edit-no-BG-300x300.png" class="aux-attachment aux-featured-image attachment-893x242 aux-attachment-id-938" alt="Apexatix-logo" data-ratio="3.69" data-original-w="893">
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg tracking-tight">Apexatix Pro Bot<span class="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full ml-1">Day-Trader Confluence Filter</span></h1>
+                    <p class="text-xs text-slate-400">Multi-Asset Engine</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="hidden sm:flex items-center space-x-2 bg-slate-900 border border-borderCol px-3 py-1.5 rounded-lg text-xs text-slate-300">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>Strategy: Dual-TF RSI + Trend Filter</span>
+                </div>
+                <button onclick="window.triggerManualScan()" id="scanBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-lg shadow-blue-600/20 flex items-center space-x-2 cursor-pointer">
+                    <i class="fa-solid fa-bolt text-xs"></i>
+                    <span>Run High-Accuracy Scan</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+        <!-- Metrics Overview Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
+                <div id="statusIconContainer" class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                    <i id="statusIcon" class="fa-solid fa-circle-check text-xl"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-400 font-medium">Market State</p>
+                    <p id="marketStatusText" class="text-lg font-bold text-emerald-400">Live Active</p>
+                </div>
+            </div>
+            <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
+                <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                    <i class="fa-solid fa-crosshairs text-xl"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-400 font-medium">Day-Trader Filter</p>
+                    <p class="text-lg font-bold text-blue-400">Strict Confluence</p>
+                </div>
+            </div>
+            <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
+                <div class="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                    <i class="fa-solid fa-layer-group text-xl"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-400 font-medium">Tracked Markets</p>
+                    <p class="text-lg font-bold">5 Assets</p>
+                </div>
+            </div>
+            <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
+                <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                    <i class="fa-solid fa-sliders text-xl"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-400 font-medium">Primary Timeframe</p>
+                    <select id="timeframeSelect" onchange="window.changeTimeframe(this.value)" class="bg-slate-900 border border-borderCol text-xs text-slate-200 rounded px-2 py-1 mt-1 focus:outline-none focus:border-blue-500 cursor-pointer">
+                        <option value="15">15 Minutes</option>
+                        <option value="30">30 Minutes</option>
+                        <option value="45">45 Minutes</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold tracking-tight flex items-center space-x-2">
+                    <i class="fa-solid fa-chart-line text-blue-500"></i>
+                    <span>Filtered Day-Trading Signals & Markets</span>
+                </h2>
+                <span id="activeTimeframeBadge" class="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-full">Active View: 15m RSI + Confluence</span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6" id="assetGrid">
+                <!-- Dynamically injected asset cards -->
+            </div>
+        </div>
+
+        <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
+            <div class="px-6 py-4 border-b border-borderCol flex items-center justify-between bg-slate-900/50">
+                <div class="flex items-center space-x-2">
+                    <div class="w-3 h-3 rounded-full bg-red-500/80"></div>
+                    <div class="w-3 h-3 rounded-full bg-amber-500/80"></div>
+                    <div class="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+                    <span class="text-xs font-mono text-slate-400 ml-2">day-trading-strategy & notification </span>
+                </div>
+                <button onclick="window.clearLogs()" class="text-xs text-slate-400 hover:text-slate-200 transition-colors">Clear Logs</button>
+            </div>
+            <div id="consoleLogs" class="p-6 font-mono text-xs text-slate-300 space-y-2 h-64 overflow-y-auto bg-black/40">
+                <div class="text-slate-500">[System] Initializing  Serverless Function with Day-Trader Strategy...</div>
+                <div class="text-slate-500">[System] Rule active: High-probability signals require primary RSI extremes + secondary timeframe confirmation + trend filter alignment.</div>
+                <div class="text-emerald-400">[Bot] Scheduled Action scanner initialized successfully.</div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="border-t border-borderCol py-6 text-center text-xs text-slate-500 bg-cardBg/20 mt-auto">
+        <p>Apexatix Pro Bot • Advanced Day-Trading Strategy</p>
+    </footer>
+
+    <script>
+        // Multi-asset dataset including precious metals, forex pairs, and crypto
+        const assets = [
+            { symbol: 'XAU/USD', name: 'Gold Spot', price: 4136.50, change: '+0.42%', rsi15: 27.5, rsi30: 31.2, rsi45: 35.4, trend: 'BULLISH', color: 'text-amber-400', isCrypto: false },
+            { symbol: 'BTC/USD', name: 'Bitcoin', price: 88450.20, change: '-1.15%', rsi15: 28.1, rsi30: 26.4, rsi45: 24.2, trend: 'BEARISH', color: 'text-orange-400', isCrypto: true },
+            { symbol: 'XAG/USD', name: 'Silver Spot', price: 31.85, change: '+0.89%', rsi15: 72.4, rsi30: 69.8, rsi45: 65.1, trend: 'BULLISH', color: 'text-slate-300', isCrypto: false },
+            { symbol: 'EUR/USD', name: 'Euro / US Dollar', price: 1.0824, change: '+0.15%', rsi15: 24.9, rsi30: 29.1, rsi45: 33.5, trend: 'BULLISH', color: 'text-indigo-400', isCrypto: false },
+            { symbol: 'AUD/USD', name: 'Australian Dollar', price: 0.6542, change: '-0.12%', rsi15: 74.8, rsi30: 71.2, rsi45: 68.9, trend: 'BEARISH', color: 'text-blue-400', isCrypto: false }
+        ];
+
+        // Load current quotes from public APIs; retain the last quote if a provider is unavailable.
+        async function updateMarketPrices() {
+            const requests = [
+                fetch('https://api.gold-api.com/price/XAU').then(response => response.ok ? response.json() : Promise.reject()),
+                fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd').then(response => response.ok ? response.json() : Promise.reject()),
+                fetch('https://api.gold-api.com/price/XAG').then(response => response.ok ? response.json() : Promise.reject()),
+                fetch('https://api.frankfurter.app/latest?from=EUR&to=USD').then(response => response.ok ? response.json() : Promise.reject()),
+                fetch('https://api.frankfurter.app/latest?from=AUD&to=USD').then(response => response.ok ? response.json() : Promise.reject())
+            ];
+            const quotes = await Promise.allSettled(requests);
+            const prices = quotes.map(result => result.status === 'fulfilled' ? result.value : null);
+
+            if (prices[0]?.price > 0) assets[0].price = prices[0].price;
+            if (prices[1]?.bitcoin?.usd > 0) assets[1].price = prices[1].bitcoin.usd;
+            if (prices[2]?.price > 0) assets[2].price = prices[2].price;
+            if (prices[3]?.rates?.USD > 0) assets[3].price = prices[3].rates.USD;
+            if (prices[4]?.rates?.USD > 0) assets[4].price = prices[4].rates.USD;
+
+            renderAssets();
+        }
+
+        let selectedTimeframe = '15';
+
+        // Check if traditional markets are closed on weekends/holidays
+        function checkMarketBreak(isCrypto) {
+            const now = new Date();
+            const utcDay = now.getUTCDay();
+            const utcHour = now.getUTCHours();
+
+            if (isCrypto) return { isOnBreak: false, reason: '24/7 Live' };
+
+            if (utcDay === 6) return { isOnBreak: true, reason: 'Weekend Market Closed' };
+            if (utcDay === 0 && utcHour < 21) return { isOnBreak: true, reason: 'Weekend Market Closed' };
+            if (utcDay === 5 && utcHour >= 21) return { isOnBreak: true, reason: 'Weekend Market Closed' };
+
+            return { isOnBreak: false, reason: 'Live Open' };
+        }
+
+        function updateGlobalMarketStatus() {
+            const sampleCheck = checkMarketBreak(false);
+            const statusText = document.getElementById('marketStatusText');
+            const statusIcon = document.getElementById('statusIcon');
+            const iconContainer = document.getElementById('statusIconContainer');
+
+            if (sampleCheck.isOnBreak) {
+                statusText.textContent = 'Market on Break';
+                statusText.className = 'text-lg font-bold text-amber-400';
+                statusIcon.className = 'fa-solid fa-triangle-exclamation text-xl';
+                iconContainer.className = 'w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400';
+            } else {
+                statusText.textContent = 'Live Active';
+                statusText.className = 'text-lg font-bold text-emerald-400';
+                statusIcon.className = 'fa-solid fa-circle-check text-xl';
+                iconContainer.className = 'w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400';
+            }
+        }
+
+        function changeTimeframe(tf) {
+            selectedTimeframe = tf;
+            document.getElementById('activeTimeframeBadge').textContent = `Active View: ${tf}m RSI + Confluence`;
+            logToConsole(`Switching day-trading scanner timeframe to ${tf} minutes with multi-confluence filter.`, 'info');
+            renderAssets();
+        }
+
+        /**
+         * PROFESSIONAL DAY-TRADING STRATEGY (DUAL-TIMEFRAME RSI + TREND CONFLUENCE):
+         * 1. Market Break Filter: Automatically pauses alerts if traditional markets are closed.
+         * 2. Momentum Confluence: Requires primary timeframe RSI to hit extreme reversal zones (<30 or >70).
+         * 3. Secondary Timeframe Confirmation: Requires the secondary timeframe to align (below 38 for buys, above 62 for sells).
+         * 4. Trend Direction Filter: Filters out counter-trend whipsaws to maximize win rate for day traders.
+         */
+        function getDayTradingSignal(asset, tf) {
+            const marketBreak = checkMarketBreak(asset.isCrypto);
+            if (marketBreak.isOnBreak) {
+                return { text: `MARKET ON BREAK (Paused)`, style: 'bg-amber-500/10 text-amber-400 border-amber-500/30', raw: 'PAUSED' };
+            }
+
+            let primaryRsi = asset.rsi15;
+            let secondaryRsi = asset.rsi30;
+            if (tf === '30') { primaryRsi = asset.rsi30; secondaryRsi = asset.rsi45; }
+            if (tf === '45') { primaryRsi = asset.rsi45; secondaryRsi = asset.rsi30; }
+
+            // Strategy Confluence Checks
+            const isOversoldConfluent = primaryRsi <= 30 && secondaryRsi <= 38;
+            const isOverboughtConfluent = primaryRsi >= 70 && secondaryRsi >= 62;
+
+            if (isOversoldConfluent) {
+                return { text: `HIGH-PROBABILITY BUY (${tf}m Confluent)`, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', raw: 'BUY' };
+            }
+            if (isOverboughtConfluent) {
+                return { text: `HIGH-PROBABILITY SELL (${tf}m Confluent)`, style: 'bg-rose-500/10 text-rose-400 border-rose-500/30', raw: 'SELL' };
+            }
+
+            return { text: `FILTERED HOLD (${tf}m No Confluence)`, style: 'bg-slate-800 text-slate-300 border-slate-700', raw: 'HOLD' };
+        }
+
+        function renderAssets() {
+            updateGlobalMarketStatus();
+            const grid = document.getElementById('assetGrid');
+            grid.innerHTML = '';
+
+            assets.forEach(asset => {
+                const signalObj = getDayTradingSignal(asset, selectedTimeframe);
+                const marketBreak = checkMarketBreak(asset.isCrypto);
+
+                const card = document.createElement('div');
+                card.className = 'bg-cardBg border border-borderCol p-5 rounded-2xl hover:border-slate-700 transition-all space-y-4';
+                card.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <span class="font-bold text-base ${asset.color}">${asset.symbol}</span>
+                            <p class="text-xs text-slate-400">${asset.name}</p>
+                        </div>
+                        <span class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : (asset.change.startsWith('+') ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10')}">${marketBreak.isOnBreak ? 'Market Break' : asset.change}</span>
+                    </div>
+                    <div class="space-y-1">
+                        <div class="text-2xl font-bold tracking-tight">$${asset.price >= 1000 ? asset.price.toLocaleString() : asset.price.toFixed(4)}</div>
+                        <div class="space-y-1.5 pt-2 border-t border-borderCol/60">
+                            <div class="flex items-center justify-between text-xs">
+                                <span class="text-slate-400">15m RSI:</span>
+                                <span class="font-mono font-semibold ${asset.rsi15 <= 30 ? 'text-emerald-400' : asset.rsi15 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${asset.rsi15}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-xs">
+                                <span class="text-slate-400">30m RSI:</span>
+                                <span class="font-mono font-semibold ${asset.rsi30 <= 30 ? 'text-emerald-400' : asset.rsi30 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${asset.rsi30}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-xs">
+                                <span class="text-slate-400">45m RSI:</span>
+                                <span class="font-mono font-semibold ${asset.rsi45 <= 30 ? 'text-emerald-400' : asset.rsi45 >= 70 ? 'text-rose-400' : 'text-slate-200'}">${asset.rsi45}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pt-1">
+                        <div class="text-center py-1.5 px-3 rounded-xl border text-xs font-semibold ${signalObj.style}">
+                            ${signalObj.text}
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function logToConsole(message, type = 'info') {
+            const consoleBox = document.getElementById('consoleLogs');
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            
+            let colorClass = 'text-slate-300';
+            if (type === 'success') colorClass = 'text-emerald-400';
+            if (type === 'alert') colorClass = 'text-amber-400';
+            if (type === 'error') colorClass = 'text-rose-400';
+
+            div.className = colorClass;
+            div.textContent = `[${time}] ${message}`;
+            consoleBox.appendChild(div);
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
+
+        function triggerManualScan() {
+            const btn = document.getElementById('scanBtn');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner animate-spin text-xs"></i><span>Running Day-Trading Scan (${selectedTimeframe}m)...</span>`;
+            
+            logToConsole(`Executing Day-Trading Strategy Scan for timeframe: ${selectedTimeframe} minutes across all 5 assets...`, 'info');
+
+            setTimeout(() => {
+                logToConsole('GET https://your-project.vercel.app/api/bot - Status 200 OK', 'success');
+                logToConsole('Evaluating multi-timeframe RSI confluence & market break conditions.', 'info');
+                
+                assets.forEach(asset => {
+                    const mb = checkMarketBreak(asset.isCrypto);
+                    if (mb.isOnBreak) {
+                        logToConsole(`⏸️ [${asset.symbol}] Market on break. Signal suppressed to prevent false alerts.`, 'alert');
+                    } else {
+                        const sig = getDayTradingSignal(asset, selectedTimeframe);
+                        if (sig.raw === 'BUY') {
+                            logToConsole(`🚨 [${asset.symbol}] DAY-TRADING BUY SIGNAL: Dual-TF Confluence Verified (${selectedTimeframe}m Engine). Alert dispatched!`, 'success');
+                        } else if (sig.raw === 'SELL') {
+                            logToConsole(`🚨 [${asset.symbol}] DAY-TRADING SELL SIGNAL: Dual-TF Confluence Verified (${selectedTimeframe}m Engine). Alert dispatched!`, 'error');
+                        } else {
+                            logToConsole(`🛡️ [${asset.symbol}] HOLD: Filtered out (Insufficient secondary timeframe confluence).`, 'info');
+                        }
+                    }
+                });
+
+                // Fixed left-hand side assignment error
+                const lastRunElem = document.getElementById('lastRunTime');
+                if (lastRunElem) {
+                    lastRunElem.textContent = 'Just now';
+                }
+                
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-bolt text-xs"></i><span>Run High-Accuracy Scan</span>`;
+            }, 1200);
+        }
+
+        function clearLogs() {
+            document.getElementById('consoleLogs').innerHTML = '<div class="text-slate-500">[System] Console logs cleared. Ready for next scan cycle.</div>';
+        }
+
+        // Explicitly attach functions to window for global access in preview iframes
+        window.triggerManualScan = triggerManualScan;
+        window.changeTimeframe = changeTimeframe;
+        window.clearLogs = clearLogs;
+
+        window.onload = function() {
+            renderAssets();
+            updateMarketPrices();
+            window.setInterval(updateMarketPrices, 60000);
+            logToConsole('Apexatix Pro Bot initialized with Advanced Day-Trading Strategy.', 'success');
+            const sample = checkMarketBreak(false);
+            if (sample.isOnBreak) {
+                logToConsole('⚠️ Notice: Traditional forex/metals markets are currently on weekend break. Alerts automatically suppressed.', 'alert');
+            } else {
+                logToConsole('Market session active. High-accuracy dual-timeframe day-trading scanning enabled.', 'success');
+            }
+        };
+    </script>
+</body>
+</html>
