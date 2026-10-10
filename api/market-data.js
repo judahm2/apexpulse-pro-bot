@@ -29,8 +29,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Provide 1-5 valid symbols and a timeframe of 15, 30, or 45 minutes.' });
   }
 
-  const twelveDataKey = process.env.bc953425eb944deb8bfea02cf10f4b8e;
-  const finnHubApiKey = process.env.db5527hr01qv1n8snelgdb5527hr01qv1n8snem0;
+  const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const finnHubApiKey = process.env.FINNHUB_API_KEY;
 
   try {
     res.setHeader('Cache-Control', forceRefresh
