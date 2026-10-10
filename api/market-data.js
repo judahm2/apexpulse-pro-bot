@@ -41,6 +41,15 @@ export default async function handler(req, res) {
         if (!twelveDataKey) throw new Error('TWELVE_DATA_API_KEY is not configured.');
         return await getTwelveDataResult(symbol, twelveDataKey, timeframe);
       } catch (primaryError) {
+        let silverFallbackError = null;
+        if (isSilverSymbol(symbol)) {
+          try {
+            return await getSilverFuturesResult(symbol, timeframe);
+          } catch (error) {
+            silverFallbackError = error;
+          }
+        }
+
         let keylessCryptoError = null;
         if (cryptoSymbols.has(symbol)) {
           try {
@@ -55,6 +64,7 @@ export default async function handler(req, res) {
             return await getFinnhubResult(symbol, cryptoSymbols.has(symbol), finnHubApiKey, timeframe);
           } catch (fallbackError) {
             const errors = [`Twelve Data: ${primaryError.message}`];
+            if (silverFallbackError) errors.push(`Silver futures fallback: ${silverFallbackError.message}`);
             if (keylessCryptoError) errors.push(`Binance/Coinbase: ${keylessCryptoError.message}`);
             errors.push(`Finnhub: ${fallbackError.message}`);
             return { symbol, error: errors.join(' ') };
@@ -62,8 +72,10 @@ export default async function handler(req, res) {
         }
 
         const errors = [`Twelve Data: ${primaryError.message}`];
+        if (silverFallbackError) errors.push(`Silver futures fallback: ${silverFallbackError.message}`);
         if (keylessCryptoError) errors.push(`Binance/Coinbase: ${keylessCryptoError.message}`);
-        else if (!cryptoSymbols.has(symbol)) errors.push('Configure FINNHUB_API_KEY to enable a backup provider.');
+        else if (!finnHubApiKey && !isSilverSymbol(symbol)) errors.push('Configure FINNHUB_API_KEY to enable a backup provider.');
+        else if (!finnHubApiKey && isSilverSymbol(symbol)) errors.push('Configure FINNHUB_API_KEY to enable another backup provider.');
         return { symbol, error: errors.join(' ') };
       }
     }));
@@ -135,6 +147,37 @@ async function getCoinbaseResult(symbol, timeframe) {
   })).reverse(), 'Coinbase', timeframe);
 }
 
+async function getSilverFuturesResult(symbol, timeframe) {
+  const url = new URL('https://query1.finance.yahoo.com/v8/finance/chart/SI%3DF');
+  url.search = new URLSearchParams({ range: '5d', interval: '15m' }).toString();
+
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0' }
+  });
+  const data = await readProviderJson(response, 'Yahoo Finance');
+  const chart = data.chart?.result?.[0];
+  if (!chart || !Array.isArray(chart.timestamp) || !Array.isArray(chart.indicators?.quote?.[0]?.close)) {
+    throw new Error(data.chart?.error?.description || 'No COMEX silver futures candles were returned.');
+  }
+
+  const quote = chart.indicators.quote[0];
+  const candles = chart.timestamp.map((time, index) => ({
+    time: Number(time),
+    open: quote.open?.[index] == null ? Number.NaN : Number(quote.open[index]),
+    high: quote.high?.[index] == null ? Number.NaN : Number(quote.high[index]),
+    low: quote.low?.[index] == null ? Number.NaN : Number(quote.low[index]),
+    close: quote.close[index] == null ? Number.NaN : Number(quote.close[index])
+  }));
+
+  return createMarketResult(
+    symbol,
+    candles,
+    'Yahoo Finance (COMEX silver futures proxy)',
+    timeframe,
+    chart.meta?.currency || 'USD'
+  );
+}
+
 async function getTwelveDataResult(symbol, apiKey, timeframe) {
   const url = new URL('https://api.twelvedata.com/time_series');
   url.search = new URLSearchParams({
@@ -190,6 +233,10 @@ async function getFinnhubResult(symbol, isCrypto, apiKey, timeframe) {
     close: Number(close)
   }));
   return createMarketResult(symbol, candles, 'Finnhub', timeframe);
+}
+
+function isSilverSymbol(symbol) {
+  return ['XAG/USD', 'XAGUSD', 'XAG-USD'].includes(symbol.toUpperCase());
 }
 
 async function readProviderJson(response, provider) {

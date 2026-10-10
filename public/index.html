@@ -188,7 +188,7 @@
 
             const updatePrice = (symbol, price) => {
                 const asset = assets.find(item => item.symbol === symbol);
-                if (asset && price > 0) asset.price = price;
+                if (asset && price > 0 && !asset.dataProvider?.includes('silver futures proxy')) asset.price = price;
             };
             updatePrice('XAU/USD', prices[0]?.price);
             updatePrice('BTC/USD', prices[1]?.bitcoin?.usd);
