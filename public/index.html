@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ApexPulse Pro • High-Accuracy Day-Trading Confluence Engine</title>
+    <title>Apexatix Pro Bot • High-Accuracy Day-Trading Confluence Engine</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -41,8 +41,8 @@
                     <i class="fa-solid fa-shield-halved text-white text-lg"></i>
                 </div>
                 <div>
-                    <h1 class="font-bold text-lg tracking-tight">ApexPulse Pro <span class="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full ml-1">Day-Trader Confluence Filter</span></h1>
-                    <p class="text-xs text-slate-400">GitHub Actions + Vercel Multi-Asset Engine</p>
+                    <h1 class="font-bold text-lg tracking-tight">Apexatix Pro Bot<span class="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full ml-1">Day-Trader Confluence Filter</span></h1>
+                    <p class="text-xs text-slate-400">Multi-Asset Engine</p>
                 </div>
             </div>
             <div class="flex items-center space-x-4">
@@ -129,16 +129,16 @@
                 <button onclick="window.clearLogs()" class="text-xs text-slate-400 hover:text-slate-200 transition-colors">Clear Logs</button>
             </div>
             <div id="consoleLogs" class="p-6 font-mono text-xs text-slate-300 space-y-2 h-64 overflow-y-auto bg-black/40">
-                <div class="text-slate-500">[System] Initializing Vercel Serverless Function with Day-Trader Strategy...</div>
+                <div class="text-slate-500">[System] Initializing  Serverless Function with Day-Trader Strategy...</div>
                 <div class="text-slate-500">[System] Rule active: High-probability signals require primary RSI extremes + secondary timeframe confirmation + trend filter alignment.</div>
-                <div class="text-emerald-400">[Bot] Scheduled GitHub Action scanner initialized successfully.</div>
+                <div class="text-emerald-400">[Bot] Scheduled Action scanner initialized successfully.</div>
             </div>
         </div>
 
     </main>
 
     <footer class="border-t border-borderCol py-6 text-center text-xs text-slate-500 bg-cardBg/20 mt-auto">
-        <p>ApexPulse Pro • Built for GitHub Actions & Vercel Free Tiers • Advanced Day-Trading Strategy</p>
+        <p>Apexatix Pro Bot • Advanced Day-Trading Strategy</p>
     </footer>
 
     <script>
@@ -150,6 +150,27 @@
             { symbol: 'EUR/USD', name: 'Euro / US Dollar', price: 1.0824, change: '+0.15%', rsi15: 24.9, rsi30: 29.1, rsi45: 33.5, trend: 'BULLISH', color: 'text-indigo-400', isCrypto: false },
             { symbol: 'AUD/USD', name: 'Australian Dollar', price: 0.6542, change: '-0.12%', rsi15: 74.8, rsi30: 71.2, rsi45: 68.9, trend: 'BEARISH', color: 'text-blue-400', isCrypto: false }
         ];
+
+        // Load current quotes from public APIs; retain the last quote if a provider is unavailable.
+        async function updateMarketPrices() {
+            const requests = [
+                fetch('https://api.gold-api.com/price/XAU').then(response => response.ok ? response.json() : Promise.reject()),
+                fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd').then(response => response.ok ? response.json() : Promise.reject()),
+                fetch('https://api.gold-api.com/price/XAG').then(response => response.ok ? response.json() : Promise.reject()),
+                fetch('https://api.frankfurter.app/latest?from=EUR&to=USD').then(response => response.ok ? response.json() : Promise.reject()),
+                fetch('https://api.frankfurter.app/latest?from=AUD&to=USD').then(response => response.ok ? response.json() : Promise.reject())
+            ];
+            const quotes = await Promise.allSettled(requests);
+            const prices = quotes.map(result => result.status === 'fulfilled' ? result.value : null);
+
+            if (prices[0]?.price > 0) assets[0].price = prices[0].price;
+            if (prices[1]?.bitcoin?.usd > 0) assets[1].price = prices[1].bitcoin.usd;
+            if (prices[2]?.price > 0) assets[2].price = prices[2].price;
+            if (prices[3]?.rates?.USD > 0) assets[3].price = prices[3].rates.USD;
+            if (prices[4]?.rates?.USD > 0) assets[4].price = prices[4].rates.USD;
+
+            renderAssets();
+        }
 
         let selectedTimeframe = '15';
 
@@ -337,6 +358,8 @@
 
         window.onload = function() {
             renderAssets();
+            updateMarketPrices();
+            window.setInterval(updateMarketPrices, 60000);
             logToConsole('ApexPulse Pro initialized with Advanced Day-Trading Strategy.', 'success');
             const sample = checkMarketBreak(false);
             if (sample.isOnBreak) {
