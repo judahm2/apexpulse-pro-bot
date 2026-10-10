@@ -52,7 +52,7 @@ export default async function handler(req, res) {
       });
     }
 
-    let alertBody = "📊 **ApexPulse Pro Day-Trading Scan**\n\n";
+    let alertBody = "📊 **Apexatix Pro Bot Day-Trading Scan**\n\n";
     results.forEach(item => {
       alertBody += `🔹 **${item.symbol}**\n   Price: ${item.price || 'N/A'}\n   15m RSI: ${item.rsi15}\n   30m RSI: ${item.rsi30}\n   Status: ${item.signal}\n\n`;
     });
