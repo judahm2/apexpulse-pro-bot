@@ -70,3 +70,55 @@ test('keyless crypto fallback returns closed candles and neutral RSI for flat pr
     else process.env.FINNHUB_API_KEY = originalFinnhubKey;
   }
 });
+
+test('silver uses the configured spot-market provider instead of a futures proxy', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  process.env.TWELVE_DATA_API_KEY = 'test-key';
+  delete process.env.FINNHUB_API_KEY;
+  const currentInterval = Math.floor(Date.now() / 900000) * 900000;
+  const values = Array.from({ length: 150 }, (_, index) => {
+    const openTime = currentInterval - ((150 - index) * 900000);
+    const close = 30 + (index * 0.01);
+    return {
+      datetime: new Date(openTime).toISOString().slice(0, 19).replace('T', ' '),
+      open: String(close),
+      high: String(close + 0.1),
+      low: String(close - 0.1),
+      close: String(close)
+    };
+  }).reverse();
+  let requestedUrl;
+  globalThis.fetch = async url => {
+    requestedUrl = new URL(url);
+    return new Response(JSON.stringify({
+      meta: { currency: 'USD' },
+      values
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const response = createResponse();
+    await handler({
+      method: 'GET',
+      query: { symbols: 'XAG/USD', timeframe: '15' }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.results.length, 1);
+    assert.equal(response.body.results[0].provider, 'Twelve Data');
+    assert.equal(response.body.results[0].currency, 'USD');
+    assert.equal(requestedUrl.hostname, 'api.twelvedata.com');
+    assert.equal(requestedUrl.searchParams.get('symbol'), 'XAG/USD');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
+    else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
+    if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
+    else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+  }
+});
