@@ -33,6 +33,8 @@ export default async function handler(req, res) {
 
   const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
   const finnHubApiKey = process.env.FINNHUB_API_KEY;
+  const oandaApiToken = process.env.OANDA_API_TOKEN;
+  const oandaAccountId = process.env.OANDA_ACCOUNT_ID;
 
   try {
     const results = await Promise.all(symbols.map(async symbol => {
@@ -57,6 +59,18 @@ export default async function handler(req, res) {
             return await getFinnhubResult(symbol, cryptoSymbols.has(symbol), finnHubApiKey, timeframe);
           } catch (fallbackError) {
             errors.push(`Finnhub: ${fallbackError.message}`);
+          }
+        }
+
+        if (symbol === 'XAG/USD') {
+          if (!oandaApiToken || !oandaAccountId) {
+            errors.push('OANDA: configure OANDA_API_TOKEN and OANDA_ACCOUNT_ID for the XAG/USD candle fallback.');
+          } else {
+            try {
+              return await getOandaResult(symbol, oandaApiToken, oandaAccountId, timeframe);
+            } catch (fallbackError) {
+              errors.push(`OANDA: ${fallbackError.message}`);
+            }
           }
         }
 
@@ -222,6 +236,41 @@ async function getFinnhubResult(symbol, isCrypto, apiKey, timeframe) {
   return createMarketResult(symbol, candles, 'Finnhub', timeframe);
 }
 
+async function getOandaResult(symbol, apiToken, accountId, timeframe) {
+  const environment = process.env.OANDA_API_ENVIRONMENT || 'practice';
+  const host = environment === 'practice'
+    ? 'api-fxpractice.oanda.com'
+    : environment === 'live' ? 'api-fxtrade.oanda.com' : null;
+  if (!host) throw new Error('OANDA_API_ENVIRONMENT must be "practice" or "live".');
+
+  const instrument = symbol.replace('/', '_');
+  const url = new URL(`https://${host}/v3/accounts/${encodeURIComponent(accountId)}/instruments/${encodeURIComponent(instrument)}/candles`);
+  url.search = new URLSearchParams({
+    granularity: 'M15',
+    count: '150',
+    price: 'M'
+  }).toString();
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiToken}`
+    }
+  });
+  const data = await readProviderJson(response, 'OANDA');
+  if (!Array.isArray(data.candles)) throw new Error('Provider returned an invalid candle response.');
+
+  const candles = data.candles.map(candle => ({
+    time: parseProviderDate(candle.time),
+    open: Number(candle.mid?.o),
+    high: Number(candle.mid?.h),
+    low: Number(candle.mid?.l),
+    close: Number(candle.mid?.c),
+    closed: candle.complete
+  }));
+  return createMarketResult(symbol, candles, 'OANDA', timeframe, 'USD');
+}
+
 async function getYahooFinanceResult(symbol, isCrypto, timeframe) {
   const ticker = getYahooFinanceSymbol(symbol, isCrypto);
   const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`);
@@ -272,7 +321,7 @@ async function readProviderJson(response, provider) {
 
   if (!response.ok) {
     const detail = data && typeof data === 'object'
-      ? data.message || data.error || data.msg
+      ? data.message || data.error || data.msg || data.errorMessage || data.errorCode
       : null;
     throw new Error(`${provider} returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`);
   }
