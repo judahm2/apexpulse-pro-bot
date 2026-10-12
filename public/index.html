@@ -119,22 +119,6 @@
             </div>
         </div>
 
-        <section id="riskSettings" class="bg-cardBg border border-borderCol rounded-2xl p-5 space-y-3" aria-labelledby="riskSettingsTitle">
-            <div>
-                <h2 id="riskSettingsTitle" class="text-sm font-semibold text-slate-100">Position-size settings</h2>
-                <p class="text-xs text-slate-400 mt-1">Set account equity and the maximum risk for one trade. Per-market MT5 contract specifications are required to estimate lots.</p>
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
-                <label class="text-xs text-slate-400">Account equity
-                    <input id="accountEquityInput" type="number" min="0" step="any" inputmode="decimal" placeholder="Enter account equity" class="mt-1 w-full bg-slate-900 border border-borderCol rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500">
-                </label>
-                <label class="text-xs text-slate-400">Risk per trade (%)
-                    <input id="riskPercentInput" type="number" min="0" max="100" step="any" inputmode="decimal" placeholder="Enter risk %" class="mt-1 w-full bg-slate-900 border border-borderCol rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500">
-                </label>
-            </div>
-            <p id="riskSettingsStatus" class="text-xs text-amber-300" aria-live="polite">Enter positive account equity and a risk percentage up to 100% to enable position-size estimates.</p>
-        </section>
-
         <div>
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-semibold tracking-tight flex items-center space-x-2">
@@ -150,7 +134,7 @@
         </div>
 
         <p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3">
-            Trade guidance and position-size estimates help assess a setup; estimates depend on your inputs and broker specifications. Confirm entry, invalidation, spread, slippage, and risk yourself. This dashboard does not place orders.
+            Trade guidance levels help assess a setup. Confirm entry, invalidation, spread, slippage, and your risk limits yourself. This dashboard does not calculate position size or place orders.
         </p>
 
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
@@ -562,71 +546,8 @@
                 entry: format(entry),
                 invalidation: format(invalidation),
                 target: format(target),
-                riskDistance: format(riskDistance),
-                riskDistanceValue: riskDistance
+                riskDistance: format(riskDistance)
             };
-        }
-
-        function getPositionSize(asset, plan) {
-            const equity = Number(document.getElementById('accountEquityInput').value);
-            const riskPercent = Number(document.getElementById('riskPercentInput').value);
-            const tickSize = Number(asset.tickSize);
-            const tickValuePerLot = Number(asset.tickValuePerLot);
-            const minimumLot = Number(asset.minimumLot);
-            const lotStep = Number(asset.lotStep);
-            if (![equity, riskPercent, tickSize, tickValuePerLot, minimumLot, lotStep, plan.riskDistanceValue].every(Number.isFinite) ||
-                equity <= 0 || riskPercent <= 0 || riskPercent > 100 ||
-                tickSize <= 0 || tickValuePerLot <= 0 || minimumLot <= 0 || lotStep <= 0) return null;
-
-            const riskBudget = equity * riskPercent / 100;
-            const riskPerLot = plan.riskDistanceValue / tickSize * tickValuePerLot;
-            if (!Number.isFinite(riskBudget) || !Number.isFinite(riskPerLot) || riskBudget <= 0 || riskPerLot <= 0) return null;
-
-            const rawLots = riskBudget / riskPerLot;
-            const lotCount = Math.floor(rawLots / lotStep);
-            const [stepMantissa, stepExponent = '0'] = String(lotStep).toLowerCase().split('e');
-            const decimalPlaces = Math.min(8, Math.max(0, (stepMantissa.split('.')[1] || '').length - Number(stepExponent)));
-            const lots = Number((lotCount * lotStep).toFixed(decimalPlaces));
-            if (!Number.isFinite(lots) || lots < minimumLot) {
-                return { belowMinimum: true, riskBudget };
-            }
-            return {
-                lots,
-                riskBudget,
-                estimatedRisk: lots * riskPerLot,
-                precision: decimalPlaces
-            };
-        }
-
-        function updateRiskSettings() {
-            const equityInput = document.getElementById('accountEquityInput');
-            const riskInput = document.getElementById('riskPercentInput');
-            const equity = Number(equityInput.value);
-            const riskPercent = Number(riskInput.value);
-            const valid = equityInput.value !== '' && riskInput.value !== '' &&
-                Number.isFinite(equity) && equity > 0 &&
-                Number.isFinite(riskPercent) && riskPercent > 0 && riskPercent <= 100;
-            document.getElementById('riskSettingsStatus').textContent = valid
-                ? `Risk budget per trade: ${(equity * riskPercent / 100).toLocaleString(undefined, { maximumSignificantDigits: 8 })} account-currency units.`
-                : 'Enter positive account equity and a risk percentage greater than 0 and up to 100% to enable position-size estimates.';
-            renderAssets();
-        }
-
-        function updateAssetSizingSpec(event) {
-            const input = event.target.closest('[data-sizing-spec]');
-            if (!input) return;
-            if (input.value !== '' && (!Number.isFinite(Number(input.value)) || Number(input.value) <= 0)) {
-                input.setCustomValidity('Enter a positive broker specification value, or leave this field blank.');
-                input.reportValidity();
-                return;
-            }
-            input.setCustomValidity('');
-            const slot = Number(input.dataset.assetSlot);
-            const asset = assetSlots[slot];
-            if (!asset) return;
-            const value = input.value === '' ? null : Number(input.value);
-            asset[input.dataset.sizingSpec] = Number.isFinite(value) && value > 0 ? value : null;
-            renderAssets();
         }
 
         function renderAssets() {
@@ -682,7 +603,6 @@
                 const card = document.createElement('div');
                 const dataQuality = getDataQuality(asset, selectedTimeframe);
                 const referencePlan = getReferencePlan(asset, signalObj);
-                const positionSize = referencePlan ? getPositionSize(asset, referencePlan) : null;
                 const decision = signalObj.raw === 'BUY'
                     ? referencePlan
                         ? { label: 'BUY SETUP • REVIEW PLAN', style: 'text-emerald-300' }
@@ -739,34 +659,10 @@
                                     <div><dt class="text-slate-500">Target (2R)</dt><dd class="font-mono text-slate-200">${referencePlan.target}</dd></div>
                                     <div><dt class="text-slate-500">Risk distance</dt><dd class="font-mono text-slate-200">${referencePlan.riskDistance}</dd></div>
                                 </dl>
-                                ${positionSize
-                                    ? positionSize.belowMinimum
-                                        ? `<p class="text-xs text-amber-300">No valid order size: risk budget ${positionSize.riskBudget.toLocaleString(undefined, { maximumSignificantDigits: 6 })} is below the broker minimum volume's risk.</p>`
-                                        : `<div class="rounded-lg border border-blue-500/20 bg-blue-500/5 p-2 text-xs"><p class="font-semibold text-blue-300">Estimated order size: ${positionSize.lots.toFixed(positionSize.precision)} lots</p><p class="mt-1 text-slate-400">Estimated risk at stop: ${positionSize.estimatedRisk.toLocaleString(undefined, { maximumSignificantDigits: 6 })} account-currency units of ${positionSize.riskBudget.toLocaleString(undefined, { maximumSignificantDigits: 6 })} budget.</p></div>`
-                                    : '<p class="text-[10px] leading-relaxed text-amber-300">Position size not calculated. Enter account equity, risk %, and the broker specifications below.</p>'}
                             ` : signalObj.raw === 'BUY' || signalObj.raw === 'SELL'
                                 ? '<p class="text-[10px] leading-relaxed text-amber-300">ATR-based stop and target are unavailable, so this setup has no complete trade plan.</p>'
                                 : '<p class="text-[10px] leading-relaxed text-slate-500">Wait for a valid, fresh setup before considering a trade.</p>'}
                         </section>
-                        <details class="border-t border-borderCol pt-2">
-                            <summary class="cursor-pointer text-[10px] text-slate-400 hover:text-slate-200">Configure ${escapeHtml(asset.symbol)} MT5 contract specifications</summary>
-                            <div class="grid grid-cols-2 gap-2 mt-2">
-                                <label class="text-[10px] text-slate-500">Tick size
-                                    <input data-sizing-spec="tickSize" data-asset-slot="${index}" type="number" min="0" step="any" value="${asset.tickSize ?? ''}" placeholder="MT5 tick size" class="mt-1 w-full bg-slate-900 border border-borderCol rounded px-2 py-1.5 text-xs text-slate-100">
-                                </label>
-                                <label class="text-[10px] text-slate-500">Tick value / 1 lot
-                                    <input data-sizing-spec="tickValuePerLot" data-asset-slot="${index}" type="number" min="0" step="any" value="${asset.tickValuePerLot ?? ''}" placeholder="Account currency" class="mt-1 w-full bg-slate-900 border border-borderCol rounded px-2 py-1.5 text-xs text-slate-100">
-                                </label>
-                                <label class="text-[10px] text-slate-500">Minimum lot
-                                    <input data-sizing-spec="minimumLot" data-asset-slot="${index}" type="number" min="0" step="any" value="${asset.minimumLot ?? ''}" placeholder="e.g. broker minimum" class="mt-1 w-full bg-slate-900 border border-borderCol rounded px-2 py-1.5 text-xs text-slate-100">
-                                </label>
-                                <label class="text-[10px] text-slate-500">Lot step
-                                    <input data-sizing-spec="lotStep" data-asset-slot="${index}" type="number" min="0" step="any" value="${asset.lotStep ?? ''}" placeholder="Volume step" class="mt-1 w-full bg-slate-900 border border-borderCol rounded px-2 py-1.5 text-xs text-slate-100">
-                                </label>
-                            </div>
-                            <p class="mt-2 text-[10px] leading-relaxed text-slate-500">Copy these values from the current Exness MT5 symbol specification. Tick value must be per 1.00 lot in your account currency. Values can change; verify before each trade.</p>
-                        </details>
-                        <p class="text-[10px] leading-relaxed text-slate-500">Estimate only; not sent to a broker. Theoretical stop risk excludes commissions, spread, slippage, and gaps. Recheck current quote, contract specs, and risk before placing any order.</p>
                     </div>
                 `;
                 grid.appendChild(card);
@@ -939,8 +835,6 @@
         const assetGrid = document.getElementById('assetGrid');
         assetGrid.addEventListener('click', handleAssetGridClick);
         assetGrid.addEventListener('submit', handleAssetFormSubmit);
-        assetGrid.addEventListener('change', updateAssetSizingSpec);
-        document.getElementById('riskSettings').addEventListener('change', updateRiskSettings);
 
         window.onload = function() {
             renderAssets();
