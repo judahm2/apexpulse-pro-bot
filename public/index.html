@@ -134,7 +134,7 @@
         </div>
 
         <p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3">
-            Execution signal levels are trade-planning references for live review. Use them as actionable entry, invalidation, and 2R planning inputs after your own spread, slippage, and risk checks.
+            Trade guidance levels help assess whether a setup may warrant a trade. Confirm entry, invalidation, spread, slippage, and your risk limits yourself; position size is not calculated and this dashboard does not place orders.
         </p>
 
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
@@ -542,7 +542,12 @@
             const invalidation = signal.raw === 'BUY' ? entry - riskDistance : entry + riskDistance;
             const target = signal.raw === 'BUY' ? entry + (riskDistance * 2) : entry - (riskDistance * 2);
             const format = value => value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
-            return { entry: format(entry), invalidation: format(invalidation), target: format(target) };
+            return {
+                entry: format(entry),
+                invalidation: format(invalidation),
+                target: format(target),
+                riskDistance: format(riskDistance)
+            };
         }
 
         function renderAssets() {
@@ -598,6 +603,19 @@
                 const card = document.createElement('div');
                 const dataQuality = getDataQuality(asset, selectedTimeframe);
                 const referencePlan = getReferencePlan(asset, signalObj);
+                const decision = signalObj.raw === 'BUY'
+                    ? referencePlan
+                        ? { label: 'BUY SETUP • REVIEW PLAN', style: 'text-emerald-300' }
+                        : { label: 'BUY SETUP • PLAN INCOMPLETE — DO NOT ACT', style: 'text-amber-300' }
+                    : signalObj.raw === 'SELL'
+                        ? referencePlan
+                            ? { label: 'SELL SETUP • REVIEW PLAN', style: 'text-rose-300' }
+                            : { label: 'SELL SETUP • PLAN INCOMPLETE — DO NOT ACT', style: 'text-amber-300' }
+                        : signalObj.raw === 'UNAVAILABLE'
+                            ? { label: 'DATA UNAVAILABLE • DO NOT TRADE', style: 'text-amber-300' }
+                            : signalObj.raw === 'PAUSED'
+                                ? { label: 'MARKET PAUSED • NO TRADE', style: 'text-amber-300' }
+                                : { label: 'WAIT • NO TRADE SETUP', style: 'text-slate-300' };
                 card.className = 'relative bg-cardBg border border-borderCol p-5 rounded-2xl hover:border-slate-700 transition-all space-y-4';
                 card.innerHTML = `
                     <button type="button" data-remove-asset="${index}" aria-label="Remove ${escapeHtml(asset.symbol)}" title="Remove asset" class="absolute top-3 right-3 w-7 h-7 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors">
@@ -632,7 +650,20 @@
                         <div class="text-center py-1.5 px-3 rounded-xl border text-xs font-semibold ${signalObj.style}">
                             ${escapeHtml(signalObj.text)}
                         </div>
-                        ${referencePlan ? `<div class="text-[10px] text-slate-400 text-center mt-2">Execution signal • Entry ${referencePlan.entry} • Invalidation ${referencePlan.invalidation} • 2R target ${referencePlan.target}</div>` : ''}
+                        <section aria-label="Trade decision" class="mt-3 rounded-xl border border-borderCol bg-slate-950/50 p-3 space-y-3">
+                            <h3 class="text-[10px] uppercase tracking-wider font-semibold ${decision.style}">${decision.label}</h3>
+                            ${referencePlan ? `
+                                <dl class="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                                    <div><dt class="text-slate-500">Entry reference</dt><dd class="font-mono text-slate-200">${referencePlan.entry}</dd></div>
+                                    <div><dt class="text-slate-500">Stop / invalidation</dt><dd class="font-mono text-slate-200">${referencePlan.invalidation}</dd></div>
+                                    <div><dt class="text-slate-500">Target (2R)</dt><dd class="font-mono text-slate-200">${referencePlan.target}</dd></div>
+                                    <div><dt class="text-slate-500">Risk distance</dt><dd class="font-mono text-slate-200">${referencePlan.riskDistance}</dd></div>
+                                </dl>
+                                <p class="text-[10px] leading-relaxed text-slate-500">Position size and account risk are not calculated. Confirm your own risk limit, spread, slippage, and broker contract specs before deciding.</p>
+                            ` : signalObj.raw === 'BUY' || signalObj.raw === 'SELL'
+                                ? '<p class="text-[10px] leading-relaxed text-amber-300">ATR-based stop and target are unavailable, so this setup has no complete trade plan.</p>'
+                                : '<p class="text-[10px] leading-relaxed text-slate-500">Wait for a valid, fresh setup before considering a trade.</p>'}
+                        </section>
                     </div>
                 `;
                 grid.appendChild(card);
@@ -767,10 +798,10 @@
                             logToConsole(`[${asset.symbol}] Scan skipped: ${getDataQuality(asset, scanTimeframe).label}.`, 'alert');
                         } else if (sig.raw === 'BUY') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Execution signal: BUY (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Signal plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'ATR execution levels unavailable.'}`, 'success');
+                            logToConsole(`[${asset.symbol}] Trade guidance: BUY (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Trade plan incomplete (ATR levels unavailable); do not act on this setup.'}`, 'success');
                         } else if (sig.raw === 'SELL') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Execution signal: SELL (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Signal plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'ATR execution levels unavailable.'}`, 'alert');
+                            logToConsole(`[${asset.symbol}] Trade guidance: SELL (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Trade plan incomplete (ATR levels unavailable); do not act on this setup.'}`, 'alert');
                         } else {
                             logToConsole(`[${asset.symbol}] No setup under the selected strategy (${scanTimeframe}m).`, 'info');
                         }
