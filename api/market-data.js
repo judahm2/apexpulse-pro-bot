@@ -481,7 +481,7 @@ function calculateRSI(prices, period = 14) {
     }
   }
 
-  if (averageLoss === 0) return 100;
+  if (averageLoss === 0) return averageGain === 0 ? 50 : 100;
   const relativeStrength = averageGain / averageLoss;
   return 100 - (100 / (1 + relativeStrength));
 }

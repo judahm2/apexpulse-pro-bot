@@ -150,7 +150,7 @@
         </div>
 
         <p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3">
-            Trade guidance levels help assess whether a setup may warrant a trade. Confirm entry, invalidation, spread, slippage, and your risk limits yourself; position size is not calculated and this dashboard does not place orders.
+            Trade guidance and position-size estimates help assess a setup; estimates depend on your inputs and broker specifications. Confirm entry, invalidation, spread, slippage, and risk yourself. This dashboard does not place orders.
         </p>
 
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
@@ -689,8 +689,8 @@
                         : { label: 'BUY SETUP • PLAN INCOMPLETE — DO NOT ACT', style: 'text-amber-300' }
                     : signalObj.raw === 'SELL'
                         ? referencePlan
-                            ? { label: 'SELL SETUP • REVIEW PLAN', style: 'text-rose-300' }
-                            : { label: 'SELL SETUP • PLAN INCOMPLETE — DO NOT ACT', style: 'text-amber-300' }
+                            ? { label: 'SELL / SHORT SETUP • REVIEW PLAN', style: 'text-rose-300' }
+                            : { label: 'SELL / SHORT SETUP • PLAN INCOMPLETE — DO NOT ACT', style: 'text-amber-300' }
                         : signalObj.raw === 'UNAVAILABLE'
                             ? { label: 'DATA UNAVAILABLE • DO NOT TRADE', style: 'text-amber-300' }
                             : signalObj.raw === 'PAUSED'
@@ -904,7 +904,7 @@
                             logToConsole(`[${asset.symbol}] Trade guidance: BUY (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Trade plan incomplete (ATR levels unavailable); do not act on this setup.'}`, 'success');
                         } else if (sig.raw === 'SELL') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Trade guidance: SELL (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Trade plan incomplete (ATR levels unavailable); do not act on this setup.'}`, 'alert');
+                            logToConsole(`[${asset.symbol}] Trade guidance: SELL / SHORT (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Trade plan incomplete (ATR levels unavailable); do not act on this setup.'}`, 'alert');
                         } else {
                             logToConsole(`[${asset.symbol}] No setup under the selected strategy (${scanTimeframe}m).`, 'info');
                         }
