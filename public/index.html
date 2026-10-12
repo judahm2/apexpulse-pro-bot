@@ -117,6 +117,21 @@
 
     <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
 
+        <section id="prioritySignals" aria-label="Priority buy and sell alerts" aria-live="polite" class="bg-cardBg border border-borderCol rounded-2xl p-4 sm:p-5">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                    <h2 class="text-sm font-semibold flex items-center gap-2">
+                        <i class="fa-solid fa-bell text-amber-400" aria-hidden="true"></i>
+                        Priority BUY / SELL Alerts
+                    </h2>
+                    <p class="mt-1 text-xs text-slate-400">Fresh, complete setups across all tracked assets appear first.</p>
+                </div>
+                <div id="prioritySignalList" class="flex flex-wrap gap-2">
+                    <span class="text-xs text-slate-500">No active BUY or SELL setups</span>
+                </div>
+            </div>
+        </section>
+
         <!-- Metrics Overview Grid -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
             <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex flex-col gap-3">
@@ -769,7 +784,36 @@
             const grid = document.getElementById('assetGrid');
             grid.innerHTML = '';
 
-            assetSlots.forEach((asset, index) => {
+            const prioritizedAssets = assetSlots
+                .map((asset, slot) => {
+                    if (!asset) return { asset, slot, signal: null, plan: null, priority: 2 };
+                    const signal = getDayTradingSignal(asset, selectedTimeframe);
+                    const plan = getReferencePlan(asset, signal);
+                    const hasTradeSignal = signal.raw === 'BUY' || signal.raw === 'SELL';
+                    return {
+                        asset,
+                        slot,
+                        signal,
+                        plan,
+                        priority: hasTradeSignal ? (plan ? 0 : 1) : 2
+                    };
+                })
+                .sort((first, second) => first.priority - second.priority || first.slot - second.slot);
+
+            const activeTradeSetups = prioritizedAssets.filter(({ signal, plan }) =>
+                plan && (signal?.raw === 'BUY' || signal?.raw === 'SELL'));
+            document.getElementById('prioritySignalList').innerHTML = activeTradeSetups.length
+                ? activeTradeSetups.map(({ asset, signal }) => {
+                    const isBuy = signal.raw === 'BUY';
+                    const direction = isBuy ? 'BUY' : 'SELL';
+                    const colors = isBuy
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                        : 'border-rose-500/30 bg-rose-500/10 text-rose-300';
+                    return `<span class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold ${colors}"><span>${direction}</span><span>${escapeHtml(asset.symbol)}</span></span>`;
+                }).join('')
+                : '<span class="text-xs text-slate-500">No active BUY or SELL setups</span>';
+
+            prioritizedAssets.forEach(({ asset, slot: index, signal: signalObj }) => {
                 if (!asset) {
                     const placeholder = document.createElement('div');
                     if (addingAssetSlot === index) {
@@ -806,7 +850,6 @@
                     return;
                 }
 
-                const signalObj = getDayTradingSignal(asset, selectedTimeframe);
                 const marketBreak = checkMarketBreak(asset.isCrypto);
                 const changeClass = asset.change.startsWith('+')
                     ? 'text-emerald-400 bg-emerald-500/10'
