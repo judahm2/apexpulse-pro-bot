@@ -1,11 +1,12 @@
 const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{0,19}$/;
 const BASE_INTERVAL_SECONDS = 15 * 60;
 const TIMEFRAMES = [15, 30, 45];
-const TWELVE_DATA_CACHE_TTL_MS = 15 * 60 * 1000;
+const TWELVE_DATA_CACHE_TTL_MS = 60 * 1000;
 const PROVIDER_ERROR_CACHE_TTL_MS = 60 * 1000;
 const twelveDataCache = new Map();
 
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
     return res.status(405).json({ error: 'Method not allowed' });
@@ -74,11 +75,6 @@ export default async function handler(req, res) {
       }
     }));
 
-    const hasErrors = results.some(result => result.error);
-    res.setHeader(
-      'Cache-Control',
-      `public, s-maxage=${hasErrors ? 60 : 900}, stale-while-revalidate=60`
-    );
     return res.status(200).json({ results });
   } catch (error) {
     console.error('Market data request failed:', error);

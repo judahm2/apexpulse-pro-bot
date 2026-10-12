@@ -25,6 +25,11 @@
             }
         }
     </script>
+    <script>
+        if (localStorage.getItem('apexpulse-theme') === 'light') {
+            document.documentElement.classList.add('theme-light');
+        }
+    </script>
     <!-- FontAwesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Inter Font -->
@@ -32,6 +37,39 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
         .glow { box-shadow: 0 0 20px rgba(59, 130, 246, 0.15); }
+        html.theme-light { color-scheme: light; }
+        html.theme-light body { background-color: #f1f5f9 !important; color: #0f172a !important; }
+        html.theme-light [class~="bg-darkBg"] { background-color: #f1f5f9 !important; }
+        html.theme-light [class~="bg-cardBg"],
+        html.theme-light [class~="bg-cardBg/50"],
+        html.theme-light [class~="bg-cardBg/40"] { background-color: #ffffff !important; }
+        html.theme-light [class~="bg-slate-950/50"],
+        html.theme-light [class~="bg-black/40"] { background-color: #f8fafc !important; }
+        html.theme-light [class~="bg-slate-900"],
+        html.theme-light [class~="bg-slate-900/50"] { background-color: #f1f5f9 !important; }
+        html.theme-light [class~="bg-slate-800"] { background-color: #e2e8f0 !important; }
+        html.theme-light [class~="bg-slate-700"] { background-color: #cbd5e1 !important; }
+        html.theme-light [class~="text-slate-100"] { color: #0f172a !important; }
+        html.theme-light [class~="text-slate-200"] { color: #1e293b !important; }
+        html.theme-light [class~="text-slate-300"] { color: #334155 !important; }
+        html.theme-light [class~="text-slate-400"] { color: #475569 !important; }
+        html.theme-light [class~="text-slate-500"] { color: #64748b !important; }
+        html.theme-light [class~="border-borderCol"],
+        html.theme-light [class~="border-borderCol/60"],
+        html.theme-light [class~="border-slate-700"],
+        html.theme-light [class~="border-slate-600"] { border-color: #cbd5e1 !important; }
+        html.theme-light [class~="text-emerald-300"],
+        html.theme-light [class~="text-emerald-400"] { color: #047857 !important; }
+        html.theme-light [class~="text-rose-300"],
+        html.theme-light [class~="text-rose-400"] { color: #be123c !important; }
+        html.theme-light [class~="text-amber-300"],
+        html.theme-light [class~="text-amber-400"] { color: #b45309 !important; }
+        html.theme-light [class~="text-blue-300"],
+        html.theme-light [class~="text-blue-400"] { color: #1d4ed8 !important; }
+        html.theme-light [class~="text-indigo-400"] { color: #4338ca !important; }
+        html.theme-light [class~="text-sky-400"] { color: #0369a1 !important; }
+        html.theme-light [class~="text-orange-400"] { color: #c2410c !important; }
+        html.theme-light [class~="placeholder:text-slate-500"]::placeholder { color: #64748b !important; }
     </style>
 </head>
 <body class="bg-darkBg text-slate-100 min-h-screen flex flex-col antialiased selection:bg-blue-500 selection:text-white">
@@ -47,7 +85,10 @@
                     <p class="text-xs text-slate-400">Multi-Asset Engine</p>
                 </div>
             </div>
-            <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-2">
+                <button onclick="window.toggleTheme()" id="themeBtn" type="button" aria-label="Switch to light mode" title="Switch to light mode" class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-amber-300 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400/50 cursor-pointer">
+                    <i class="fa-solid fa-sun text-xs" aria-hidden="true"></i>
+                </button>
                 <div class="hidden sm:flex items-center space-x-2 bg-slate-900 border border-borderCol px-3 py-1.5 rounded-lg text-xs text-slate-300">
                     <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                     <span id="selectedStrategyLabel">Strategy: Dual-TF RSI Confluence</span>
@@ -55,6 +96,20 @@
                 <button onclick="window.triggerManualScan()" id="scanBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-lg shadow-blue-600/20 flex items-center space-x-2 cursor-pointer">
                     <i class="fa-solid fa-bolt text-xs"></i>
                     <span>Run Setup Scan</span>
+                </button>
+                <button onclick="window.toggleAutoScan()" id="autoScanBtn" type="button" aria-label="Automatic scanning" aria-pressed="true" title="Automatically scan for new trade setups every minute while this page is open" class="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400/50 cursor-pointer">
+                    <span>Auto-scan</span>
+                    <span data-switch-track aria-hidden="true" class="relative h-4 w-7 rounded-full bg-emerald-500 transition-colors">
+                        <span data-switch-thumb class="absolute left-3 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"></span>
+                    </span>
+                    <span data-switch-state class="text-emerald-300">On</span>
+                </button>
+                <button onclick="window.toggleTradeAlerts()" id="tradeAlertsBtn" type="button" aria-label="Trade alerts" aria-pressed="false" title="Enable browser notifications and sound for new trade setups" class="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400/50 cursor-pointer">
+                    <span>Alerts</span>
+                    <span data-switch-track aria-hidden="true" class="relative h-4 w-7 rounded-full bg-slate-600 transition-colors">
+                        <span data-switch-thumb class="absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"></span>
+                    </span>
+                    <span data-switch-state class="text-slate-400">Off</span>
                 </button>
             </div>
         </div>
@@ -134,7 +189,7 @@
         </div>
 
         <p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3">
-            Trade guidance levels help assess a setup. Confirm entry, invalidation, spread, slippage, and your risk limits yourself. This dashboard does not calculate position size or place orders.
+            Alerts use third-party closed-candle data, not Exness executable bid/ask quotes; prices may differ by provider, spread, and execution. Confirm levels and risk yourself. This dashboard does not calculate position size or place orders.
         </p>
 
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
@@ -173,33 +228,14 @@
         const publicQuoteSymbols = new Set(['XAU/USD', 'BTC/USD', 'XAG/USD', 'EUR/USD', 'AUD/USD']);
         let marketDataRequestPromise = null;
         let marketDataRequestKey = null;
+        let autoScanEnabled = true;
+        let tradeAlertsEnabled = false;
+        let tradeAlertAudioContext = null;
+        const lastObservedTradeStates = new Map();
+        const observedTradeAlertKeys = new Set();
+        const autoScanIntervalMs = 60 * 1000;
 
-        // Public quote sources keep their existing one-minute refresh schedule.
-        async function updateMarketPrices() {
-            const requests = [
-                fetch('https://api.gold-api.com/price/XAU').then(response => response.ok ? response.json() : Promise.reject()),
-                fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd').then(response => response.ok ? response.json() : Promise.reject()),
-                fetch('https://api.gold-api.com/price/XAG').then(response => response.ok ? response.json() : Promise.reject()),
-                fetch('https://api.frankfurter.app/latest?from=EUR&to=USD').then(response => response.ok ? response.json() : Promise.reject()),
-                fetch('https://api.frankfurter.app/latest?from=AUD&to=USD').then(response => response.ok ? response.json() : Promise.reject())
-            ];
-            const quotes = await Promise.allSettled(requests);
-            const prices = quotes.map(result => result.status === 'fulfilled' ? result.value : null);
-
-            const updatePrice = (symbol, price) => {
-                const asset = assets.find(item => item.symbol === symbol);
-                if (asset && price > 0 && !asset.dataProvider?.includes('silver futures proxy')) asset.price = price;
-            };
-            updatePrice('XAU/USD', prices[0]?.price);
-            updatePrice('BTC/USD', prices[1]?.bitcoin?.usd);
-            updatePrice('XAG/USD', prices[2]?.price);
-            updatePrice('EUR/USD', prices[3]?.rates?.USD);
-            updatePrice('AUD/USD', prices[4]?.rates?.USD);
-
-            renderAssets();
-        }
-
-        // Closed-candle indicators are refreshed for tracked assets every 15 minutes.
+        // Signals and displayed prices use the same 15-minute closed-candle feed.
         function updateCustomMarketPrices(includeDefaultAssets = false) {
             const customAssets = assets.filter(asset => includeDefaultAssets || !publicQuoteSymbols.has(asset.symbol));
             if (!customAssets.length) return Promise.resolve();
@@ -218,7 +254,7 @@
                 try {
                     let response;
                     try {
-                        response = await fetch(`/api/market-data?${query}`);
+                        response = await fetch(`/api/market-data?${query}`, { cache: 'no-store' });
                     } catch {
                         throw new Error('Cannot reach the market-data API. Run the dashboard with Vercel (for example, `vercel dev`) or deploy it to Vercel.');
                     }
@@ -248,6 +284,7 @@
                                 logToConsole(`[${asset.symbol}] Market data unavailable: ${error}`, 'error');
                             }
                             asset.marketDataError = error;
+                            asset.price = null;
                             asset.change = 'Unavailable';
                             asset.rsi15 = null;
                             asset.rsi30 = null;
@@ -292,6 +329,7 @@
                         asset.atrByTimeframe = result.atrByTimeframe || { 15: result.atr };
                         asset.dataUpdatedAt = Date.now();
                         applyTimeframeData(asset, selectedTimeframe);
+                        observeTradeSignal(asset);
                         if (hadError) {
                             logToConsole(`[${asset.symbol}] Live market values are available again.`, 'success');
                         } else if (!hadMarketData) {
@@ -308,6 +346,7 @@
                             logToConsole(`[${asset.symbol}] Market data unavailable: ${message}`, 'error');
                         }
                         asset.marketDataError = message;
+                        asset.price = null;
                         asset.change = 'Unavailable';
                         asset.rsi15 = null;
                         asset.rsi30 = null;
@@ -425,6 +464,178 @@
             renderAssets();
         }
 
+        function updateTradeAlertButton() {
+            const button = document.getElementById('tradeAlertsBtn');
+            button.setAttribute('aria-pressed', String(tradeAlertsEnabled));
+            button.querySelector('[data-switch-state]').textContent = tradeAlertsEnabled ? 'On' : 'Off';
+            button.title = tradeAlertsEnabled
+                ? 'Turn off browser notifications and sound for new trade setups'
+                : 'Enable browser notifications and sound for new trade setups';
+            button.querySelector('[data-switch-track]').className = tradeAlertsEnabled
+                ? 'relative h-4 w-7 rounded-full bg-blue-500 transition-colors'
+                : 'relative h-4 w-7 rounded-full bg-slate-600 transition-colors';
+            button.querySelector('[data-switch-thumb]').className = tradeAlertsEnabled
+                ? 'absolute left-0.5 top-0.5 h-3 w-3 translate-x-3 rounded-full bg-white shadow transition-transform'
+                : 'absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform';
+            button.querySelector('[data-switch-state]').className = tradeAlertsEnabled
+                ? 'text-blue-300'
+                : 'text-slate-400';
+        }
+
+        function updateAutoScanButton() {
+            const button = document.getElementById('autoScanBtn');
+            button.setAttribute('aria-pressed', String(autoScanEnabled));
+            button.querySelector('[data-switch-state]').textContent = autoScanEnabled ? 'On' : 'Off';
+            button.title = autoScanEnabled
+                ? 'Automatically scan for new trade setups every minute while this page is open'
+                : 'Turn on automatic setup scans';
+            button.querySelector('[data-switch-track]').className = autoScanEnabled
+                ? 'relative h-4 w-7 rounded-full bg-emerald-500 transition-colors'
+                : 'relative h-4 w-7 rounded-full bg-slate-600 transition-colors';
+            button.querySelector('[data-switch-thumb]').className = autoScanEnabled
+                ? 'absolute left-0.5 top-0.5 h-3 w-3 translate-x-3 rounded-full bg-white shadow transition-transform'
+                : 'absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform';
+            button.querySelector('[data-switch-state]').className = autoScanEnabled
+                ? 'text-emerald-300'
+                : 'text-slate-400';
+        }
+
+        function updateThemeButton() {
+            const isLight = document.documentElement.classList.contains('theme-light');
+            const button = document.getElementById('themeBtn');
+            const label = isLight ? 'Switch to dark mode' : 'Switch to light mode';
+            button.setAttribute('aria-label', label);
+            button.title = label;
+            button.querySelector('i').className = isLight
+                ? 'fa-solid fa-moon text-xs'
+                : 'fa-solid fa-sun text-xs';
+        }
+
+        function toggleTheme() {
+            const isLight = document.documentElement.classList.toggle('theme-light');
+            localStorage.setItem('apexpulse-theme', isLight ? 'light' : 'dark');
+            updateThemeButton();
+        }
+
+        function toggleAutoScan() {
+            autoScanEnabled = !autoScanEnabled;
+            updateAutoScanButton();
+            if (autoScanEnabled) {
+                logToConsole('Automatic trade-setup scanning enabled. Checking market data now and every minute while this page is open.', 'success');
+                assets.forEach(asset => lastObservedTradeStates.delete(`${asset.symbol}:${selectedStrategy}:${selectedTimeframe}`));
+                updateCustomMarketPrices(true);
+            } else {
+                logToConsole('Automatic scanning paused. Use Run Setup Scan to check manually.', 'alert');
+            }
+        }
+
+        async function toggleTradeAlerts() {
+            if (tradeAlertsEnabled) {
+                tradeAlertsEnabled = false;
+                updateTradeAlertButton();
+                logToConsole('Browser trade notifications and sound turned off.', 'info');
+                return;
+            }
+
+            if (typeof window.Notification === 'undefined') {
+                logToConsole('Browser notifications are not supported in this browser.', 'error');
+                return;
+            }
+
+            const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextConstructor) {
+                try {
+                    tradeAlertAudioContext = tradeAlertAudioContext || new AudioContextConstructor();
+                    await tradeAlertAudioContext.resume();
+                } catch (error) {
+                    tradeAlertAudioContext = null;
+                    logToConsole(`Notification sound could not be enabled: ${error.message || 'Audio is unavailable.'}`, 'alert');
+                }
+            } else {
+                logToConsole('Browser notifications are available, but this browser does not support notification sounds.', 'alert');
+            }
+
+            let permission = window.Notification.permission;
+            if (permission === 'default') {
+                try {
+                    permission = await window.Notification.requestPermission();
+                } catch (error) {
+                    logToConsole(`Browser notification permission could not be requested: ${error.message || 'Permission request failed.'}`, 'error');
+                    return;
+                }
+            }
+            if (permission !== 'granted') {
+                logToConsole('Trade alerts remain off because browser notification permission was not granted. Allow notifications in browser site settings, then try again.', 'alert');
+                return;
+            }
+
+            tradeAlertsEnabled = true;
+            updateTradeAlertButton();
+            assets.forEach(asset => lastObservedTradeStates.delete(`${asset.symbol}:${selectedStrategy}:${selectedTimeframe}`));
+            logToConsole('Browser notifications and sound enabled for current and new valid trade setups.', 'success');
+            if (autoScanEnabled) updateCustomMarketPrices(true);
+        }
+
+        function playTradeAlertSound(signal) {
+            if (!tradeAlertAudioContext || tradeAlertAudioContext.state === 'closed') return;
+            try {
+                const context = tradeAlertAudioContext;
+                const oscillator = context.createOscillator();
+                const gain = context.createGain();
+                const now = context.currentTime;
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(signal === 'BUY' ? 880 : 660, now);
+                gain.gain.setValueAtTime(0.0001, now);
+                gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+                oscillator.connect(gain);
+                gain.connect(context.destination);
+                oscillator.start(now);
+                oscillator.stop(now + 0.3);
+            } catch (error) {
+                logToConsole(`Trade alert sound failed: ${error.message || 'Audio playback failed.'}`, 'error');
+            }
+        }
+
+        function observeTradeSignal(asset) {
+            const key = `${asset.symbol}:${selectedStrategy}:${selectedTimeframe}`;
+            const signal = getDayTradingSignal(asset, selectedTimeframe);
+            const closedAt = asset.candleClosedAt;
+            if (!Number.isFinite(closedAt)) return;
+
+            const previous = lastObservedTradeStates.get(key);
+            lastObservedTradeStates.set(key, { closedAt, signal: signal.raw });
+            if (!autoScanEnabled || !['BUY', 'SELL'].includes(signal.raw)) return;
+
+            const isNewClosedCandle = !previous || closedAt > previous.closedAt;
+            const isNewTradeSignal = !previous || previous.signal !== signal.raw;
+            if ((!isNewClosedCandle && !isNewTradeSignal) || closedAt > Date.now() ||
+                Date.now() - closedAt > (Number(selectedTimeframe) * 60 * 1000) + (2 * 60 * 1000)) return;
+
+            const plan = getReferencePlan(asset, signal);
+            if (!plan) return;
+            const alertKey = `${key}:${closedAt}:${signal.raw}`;
+            if (observedTradeAlertKeys.has(alertKey)) return;
+            observedTradeAlertKeys.add(alertKey);
+            const direction = signal.raw === 'SELL' ? 'SELL / SHORT' : 'BUY';
+            const body = `${asset.symbol} ${direction} setup on ${selectedTimeframe}m. Entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}. ${asset.dataProvider}; candle closed ${new Date(closedAt).toLocaleString()}.`;
+
+            logToConsole(`Auto-scan found a new ${direction} setup. ${body}`, signal.raw === 'BUY' ? 'success' : 'alert');
+            if (!tradeAlertsEnabled) return;
+
+            try {
+                const notification = new window.Notification(`${asset.symbol} ${direction} setup`, {
+                    body,
+                    tag: `trade-${key}-${closedAt}`,
+                    renotify: false
+                });
+                window.setTimeout(() => notification.close(), 10000);
+                playTradeAlertSound(signal.raw);
+            } catch (error) {
+                logToConsole(`Browser trade notification failed: ${error.message || 'Notification could not be displayed.'}`, 'error');
+            }
+        }
+
         /**
          * RSI setups use closed-candle momentum extremes and secondary-timeframe confirmation.
          */
@@ -432,13 +643,16 @@
             if (asset.marketDataError) {
                 return { valid: false, label: `Data unavailable • ${asset.marketDataError}` };
             }
+            if (/proxy/i.test(asset.dataProvider || '')) {
+                return { valid: false, label: `Proxy data (${asset.dataProvider}) • excluded from trade alerts` };
+            }
             const closedAt = asset.candleClosedAt;
             if (!Number.isFinite(closedAt) || !Number.isFinite(asset.dataUpdatedAt)) {
                 return { valid: false, label: 'Waiting for closed-candle data' };
             }
 
             const ageMs = Date.now() - closedAt;
-            const staleAfterMs = Number(tf) * 60 * 1000 * 2;
+            const staleAfterMs = (Number(tf) * 60 * 1000) + (2 * 60 * 1000);
             if (ageMs < 0 || ageMs > staleAfterMs) {
                 return {
                     valid: false,
@@ -602,6 +816,10 @@
 
                 const card = document.createElement('div');
                 const dataQuality = getDataQuality(asset, selectedTimeframe);
+                const alertStateKey = `${asset.symbol}:${selectedStrategy}:${selectedTimeframe}`;
+                if (!lastObservedTradeStates.has(alertStateKey) && Number.isFinite(asset.candleClosedAt)) {
+                    lastObservedTradeStates.set(alertStateKey, { closedAt: asset.candleClosedAt, signal: signalObj.raw });
+                }
                 const referencePlan = getReferencePlan(asset, signalObj);
                 const decision = signalObj.raw === 'BUY'
                     ? referencePlan
@@ -630,6 +848,7 @@
                     </div>
                     <div class="space-y-1">
                         <div class="text-2xl font-bold tracking-tight">${Number.isFinite(asset.price) ? `${asset.currency === 'USD' || !asset.currency ? '$' : ''}${asset.price.toLocaleString(undefined, { maximumSignificantDigits: 8 })}${asset.currency && asset.currency !== 'USD' ? ` ${escapeHtml(asset.currency)}` : ''}` : '—'}</div>
+                        <p class="text-[10px] text-slate-500">Last closed ${asset.dataTimeframe || '15'}m candle</p>
                         <p class="text-[10px] leading-relaxed ${dataQuality.valid ? 'text-slate-500' : 'text-amber-300'}">${escapeHtml(dataQuality.label)}${Number.isFinite(asset.candleClose) ? ` • Candle close ${asset.candleClose.toLocaleString(undefined, { maximumSignificantDigits: 8 })}` : ''}</p>
                         <div class="space-y-1.5 pt-2 border-t border-borderCol/60">
                             <div class="flex items-center justify-between text-xs">
@@ -828,6 +1047,9 @@
 
         // Explicitly attach functions to window for global access in preview iframes
         window.triggerManualScan = triggerManualScan;
+        window.toggleAutoScan = toggleAutoScan;
+        window.toggleTradeAlerts = toggleTradeAlerts;
+        window.toggleTheme = toggleTheme;
         window.changeTimeframe = changeTimeframe;
         window.changeStrategy = changeStrategy;
         window.clearLogs = clearLogs;
@@ -838,10 +1060,18 @@
 
         window.onload = function() {
             renderAssets();
-            updateMarketPrices();
-            updateCustomMarketPrices(true);
-            window.setInterval(updateMarketPrices, 60000);
-            window.setInterval(() => updateCustomMarketPrices(true), 15 * 60 * 1000);
+            updateAutoScanButton();
+            updateTradeAlertButton();
+            updateThemeButton();
+            if (autoScanEnabled) {
+                updateCustomMarketPrices(true);
+                window.setInterval(() => {
+                    if (autoScanEnabled && !document.hidden) updateCustomMarketPrices(true);
+                }, autoScanIntervalMs);
+            }
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && autoScanEnabled) updateCustomMarketPrices(true);
+            });
             logToConsole('Apexatix Pro Bot initialized with Advanced Day-Trading Strategy.', 'success');
             const initialMarketCheck = checkMarketBreak(false);
             if (initialMarketCheck.isOnBreak) {

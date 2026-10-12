@@ -57,6 +57,7 @@ test('keyless crypto fallback returns closed candles and neutral RSI for flat pr
     }, response);
 
     assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['Cache-Control'], 'no-store');
     assert.equal(response.body.results.length, 1);
     assert.equal(response.body.results[0].provider, 'Binance');
     assert.equal(response.body.results[0].rsi15, 50);
