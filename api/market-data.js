@@ -1,6 +1,9 @@
 const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{0,19}$/;
 const BASE_INTERVAL_SECONDS = 15 * 60;
 const TIMEFRAMES = [15, 30, 45];
+const TWELVE_DATA_CACHE_TTL_MS = 15 * 60 * 1000;
+const PROVIDER_ERROR_CACHE_TTL_MS = 60 * 1000;
+const twelveDataCache = new Map();
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -17,8 +20,6 @@ export default async function handler(req, res) {
     ? cryptoSymbolsParam.split(',').map(symbol => symbol.trim().toUpperCase()).filter(Boolean)
     : []);
   const timeframe = Number(req.query?.timeframe || 15);
-  const forceRefresh = req.query?.refresh === '1';
-
   if (
     symbols.length === 0 ||
     symbols.length > 5 ||
@@ -33,23 +34,19 @@ export default async function handler(req, res) {
   const finnHubApiKey = process.env.FINNHUB_API_KEY;
 
   try {
-    res.setHeader('Cache-Control', forceRefresh
-      ? 'private, no-store'
-      : 'public, s-maxage=900, stale-while-revalidate=60');
     const results = await Promise.all(symbols.map(async symbol => {
+      if (isSilverSymbol(symbol)) {
+        try {
+          return await getSilverFuturesResult(symbol, timeframe);
+        } catch (error) {
+          return { symbol, error: `Silver futures fallback: ${error.message}` };
+        }
+      }
+
       try {
         if (!twelveDataKey) throw new Error('TWELVE_DATA_API_KEY is not configured.');
         return await getTwelveDataResult(symbol, twelveDataKey, timeframe);
       } catch (primaryError) {
-        let silverFallbackError = null;
-        if (isSilverSymbol(symbol)) {
-          try {
-            return await getSilverFuturesResult(symbol, timeframe);
-          } catch (error) {
-            silverFallbackError = error;
-          }
-        }
-
         let keylessCryptoError = null;
         if (cryptoSymbols.has(symbol)) {
           try {
@@ -64,7 +61,6 @@ export default async function handler(req, res) {
             return await getFinnhubResult(symbol, cryptoSymbols.has(symbol), finnHubApiKey, timeframe);
           } catch (fallbackError) {
             const errors = [`Twelve Data: ${primaryError.message}`];
-            if (silverFallbackError) errors.push(`Silver futures fallback: ${silverFallbackError.message}`);
             if (keylessCryptoError) errors.push(`Binance/Coinbase: ${keylessCryptoError.message}`);
             errors.push(`Finnhub: ${fallbackError.message}`);
             return { symbol, error: errors.join(' ') };
@@ -72,14 +68,17 @@ export default async function handler(req, res) {
         }
 
         const errors = [`Twelve Data: ${primaryError.message}`];
-        if (silverFallbackError) errors.push(`Silver futures fallback: ${silverFallbackError.message}`);
         if (keylessCryptoError) errors.push(`Binance/Coinbase: ${keylessCryptoError.message}`);
         else if (!finnHubApiKey && !isSilverSymbol(symbol)) errors.push('Configure FINNHUB_API_KEY to enable a backup provider.');
-        else if (!finnHubApiKey && isSilverSymbol(symbol)) errors.push('Configure FINNHUB_API_KEY to enable another backup provider.');
         return { symbol, error: errors.join(' ') };
       }
     }));
 
+    const hasErrors = results.some(result => result.error);
+    res.setHeader(
+      'Cache-Control',
+      `public, s-maxage=${hasErrors ? 60 : 900}, stale-while-revalidate=60`
+    );
     return res.status(200).json({ results });
   } catch (error) {
     console.error('Market data request failed:', error);
@@ -179,30 +178,58 @@ async function getSilverFuturesResult(symbol, timeframe) {
 }
 
 async function getTwelveDataResult(symbol, apiKey, timeframe) {
-  const url = new URL('https://api.twelvedata.com/time_series');
-  url.search = new URLSearchParams({
-    symbol,
-    interval: '15min',
-    outputsize: '150',
-    timezone: 'UTC',
-    apikey: apiKey
-  }).toString();
+  const series = await getCachedTwelveDataSeries(symbol, async () => {
+    const url = new URL('https://api.twelvedata.com/time_series');
+    url.search = new URLSearchParams({
+      symbol,
+      interval: '15min',
+      outputsize: '150',
+      timezone: 'UTC',
+      apikey: apiKey
+    }).toString();
 
-  const response = await fetch(url);
-  const data = await readProviderJson(response, 'Twelve Data');
-  if (data.status === 'error' || !Array.isArray(data.values)) {
-    throw new Error(data.message || 'Market data is unavailable for this symbol.');
+    const response = await fetch(url);
+    const data = await readProviderJson(response, 'Twelve Data');
+    if (data.status === 'error' || !Array.isArray(data.values)) {
+      throw new Error(data.message || 'Market data is unavailable for this symbol.');
+    }
+
+    return {
+      currency: data.meta?.currency,
+      candles: data.values.map(value => ({
+        time: parseProviderDate(value.datetime),
+        open: Number(value.open),
+        high: Number(value.high),
+        low: Number(value.low),
+        close: Number(value.close)
+      })).reverse()
+    };
+  });
+
+  return createMarketResult(symbol, series.candles, 'Twelve Data', timeframe, series.currency);
+}
+
+async function getCachedTwelveDataSeries(symbol, loadSeries) {
+  const cached = twelveDataCache.get(symbol);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  if (cached) twelveDataCache.delete(symbol);
+
+  const entry = {
+    expiresAt: Date.now() + TWELVE_DATA_CACHE_TTL_MS,
+    promise: null
+  };
+  entry.promise = loadSeries().catch(error => {
+    entry.expiresAt = Date.now() + PROVIDER_ERROR_CACHE_TTL_MS;
+    throw error;
+  });
+  twelveDataCache.set(symbol, entry);
+
+  if (twelveDataCache.size > 100) {
+    const oldestSymbol = twelveDataCache.keys().next().value;
+    if (oldestSymbol !== undefined && oldestSymbol !== symbol) twelveDataCache.delete(oldestSymbol);
   }
 
-  const candles = data.values.map(value => ({
-    time: parseProviderDate(value.datetime),
-    open: Number(value.open),
-    high: Number(value.high),
-    low: Number(value.low),
-    close: Number(value.close)
-  })).reverse();
-
-  return createMarketResult(symbol, candles, 'Twelve Data', timeframe, data.meta?.currency);
+  return entry.promise;
 }
 
 async function getFinnhubResult(symbol, isCrypto, apiKey, timeframe) {
@@ -282,22 +309,50 @@ function createMarketResult(symbol, inputCandles, provider, timeframe, currency)
 
   const last = selectedCandles[selectedCandles.length - 1];
   const previous = selectedCandles[selectedCandles.length - 2];
-  const atr = calculateATR(selectedCandles);
+  const candlesByTimeframe = { 15: candles15, 30: candles30, 45: candles45 };
+  const rsiByTimeframe = {
+    15: calculateRSI(candles15.map(candle => candle.close)),
+    30: calculateRSI(candles30.map(candle => candle.close)),
+    45: calculateRSI(candles45.map(candle => candle.close))
+  };
+  const candleCloseByTimeframe = Object.fromEntries(
+    Object.entries(candlesByTimeframe).map(([minutes, bars]) => [minutes, bars.at(-1)?.close ?? null])
+  );
+  const candleClosedAtByTimeframe = Object.fromEntries(
+    Object.entries(candlesByTimeframe).map(([minutes, bars]) => {
+      const latest = bars.at(-1);
+      return [minutes, latest ? (latest.time + (Number(minutes) * 60)) * 1000 : null];
+    })
+  );
+  const strategyIndicatorsByTimeframe = Object.fromEntries(
+    Object.entries(candlesByTimeframe).map(([minutes, bars]) => [
+      minutes,
+      calculateStrategyIndicators(bars.map(candle => candle.close))
+    ])
+  );
+  const atrByTimeframe = Object.fromEntries(
+    Object.entries(candlesByTimeframe).map(([minutes, bars]) => [minutes, calculateATR(bars)])
+  );
   return {
     symbol,
     price: last.close,
-    candleClose: last.close,
+    candleClose: candleCloseByTimeframe[timeframe],
+    candleCloseByTimeframe,
+    candleClosedAtByTimeframe,
     currency: currency || (provider === 'Binance' && symbol.endsWith('/USD')
       ? 'USDT'
       : symbol.includes('/') ? symbol.split('/').pop() : 'USD'),
     changePercent: previous.close === 0 ? null : ((last.close - previous.close) / previous.close) * 100,
-    rsi15: calculateRSI(candles15.map(candle => candle.close)),
-    rsi30: calculateRSI(candles30.map(candle => candle.close)),
-    rsi45: calculateRSI(candles45.map(candle => candle.close)),
-    strategyRsi: calculateRSI(selectedCandles.map(candle => candle.close)),
-    strategyIndicators: calculateStrategyIndicators(selectedCandles.map(candle => candle.close)),
-    atr,
-    candleClosedAt: (last.time + (timeframe * 60)) * 1000,
+    rsi15: rsiByTimeframe[15],
+    rsi30: rsiByTimeframe[30],
+    rsi45: rsiByTimeframe[45],
+    rsiByTimeframe,
+    strategyRsi: rsiByTimeframe[timeframe],
+    strategyIndicators: strategyIndicatorsByTimeframe[timeframe],
+    strategyIndicatorsByTimeframe,
+    atr: atrByTimeframe[timeframe],
+    atrByTimeframe,
+    candleClosedAt: candleClosedAtByTimeframe[timeframe],
     provider
   };
 }

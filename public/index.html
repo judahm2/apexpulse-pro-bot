@@ -171,8 +171,8 @@
         ];
         const assetSlots = [...assets, null, null, null, null].slice(0, 5);
         const publicQuoteSymbols = new Set(['XAU/USD', 'BTC/USD', 'XAG/USD', 'EUR/USD', 'AUD/USD']);
-        let marketDataRequestId = 0;
-        let forcedRefreshInProgress = false;
+        let marketDataRequestPromise = null;
+        let marketDataRequestKey = null;
 
         // Public quote sources keep their existing one-minute refresh schedule.
         async function updateMarketPrices() {
@@ -200,22 +200,26 @@
         }
 
         // Closed-candle indicators are refreshed for tracked assets every 15 minutes.
-        async function updateCustomMarketPrices(includeDefaultAssets = false, forceRefresh = false) {
-            if (forcedRefreshInProgress && !forceRefresh) return;
-            const requestId = ++marketDataRequestId;
+        function updateCustomMarketPrices(includeDefaultAssets = false) {
             const customAssets = assets.filter(asset => includeDefaultAssets || !publicQuoteSymbols.has(asset.symbol));
-            if (customAssets.length) {
+            if (!customAssets.length) return Promise.resolve();
+            const query = new URLSearchParams({
+                symbols: customAssets.map(asset => asset.symbol).join(','),
+                cryptoSymbols: customAssets.filter(asset => asset.isCrypto).map(asset => asset.symbol).join(','),
+                timeframe: '15'
+            });
+            const requestKey = query.toString();
+            if (marketDataRequestPromise) {
+                if (marketDataRequestKey === requestKey) return marketDataRequestPromise;
+                return marketDataRequestPromise.then(() => updateCustomMarketPrices(includeDefaultAssets));
+            }
+
+            const request = (async () => {
                 try {
-                    const query = new URLSearchParams({
-                        symbols: customAssets.map(asset => asset.symbol).join(','),
-                        cryptoSymbols: customAssets.filter(asset => asset.isCrypto).map(asset => asset.symbol).join(','),
-                        timeframe: selectedTimeframe,
-                        ...(forceRefresh ? { refresh: '1' } : {})
-                    });
                     let response;
                     try {
                         response = await fetch(`/api/market-data?${query}`);
-                    } catch (error) {
+                    } catch {
                         throw new Error('Cannot reach the market-data API. Run the dashboard with Vercel (for example, `vercel dev`) or deploy it to Vercel.');
                     }
                     const responseText = await response.text();
@@ -234,7 +238,6 @@
                     if (!Array.isArray(payload.results)) {
                         throw new Error('Market data endpoint returned an invalid response.');
                     }
-                    if (requestId !== marketDataRequestId) return;
 
                     const resultsBySymbol = new Map(payload.results.map(result => [result.symbol, result]));
                     customAssets.forEach(asset => {
@@ -249,9 +252,14 @@
                             asset.rsi15 = null;
                             asset.rsi30 = null;
                             asset.rsi45 = null;
+                            asset.rsiByTimeframe = null;
+                            asset.candleCloseByTimeframe = null;
+                            asset.candleClosedAtByTimeframe = null;
                             asset.strategyRsi = null;
                             asset.strategyIndicators = null;
+                            asset.strategyIndicatorsByTimeframe = null;
                             asset.atr = null;
+                            asset.atrByTimeframe = null;
                             asset.candleClosedAt = null;
                             asset.dataProvider = null;
                             return;
@@ -262,9 +270,8 @@
                         const previousProvider = asset.dataProvider;
                         asset.marketDataError = null;
                         asset.dataProvider = result.provider || 'Twelve Data';
-                        asset.dataTimeframe = selectedTimeframe;
+                        asset.dataTimeframe = '15';
                         asset.price = result.price;
-                        asset.candleClose = result.candleClose;
                         asset.currency = result.currency || asset.symbol.split('/').pop() || 'USD';
                         asset.change = Number.isFinite(result.changePercent)
                             ? `${result.changePercent >= 0 ? '+' : ''}${result.changePercent.toFixed(2)}%`
@@ -272,15 +279,19 @@
                         asset.rsi15 = result.rsi15;
                         asset.rsi30 = result.rsi30;
                         asset.rsi45 = result.rsi45;
-                        asset.strategyRsi = selectedTimeframe === '15'
-                            ? result.rsi15
-                            : selectedTimeframe === '30'
-                                ? result.rsi30
-                                : result.rsi45;
-                        asset.strategyIndicators = result.strategyIndicators;
-                        asset.atr = result.atr;
-                        asset.candleClosedAt = result.candleClosedAt;
+                        asset.rsiByTimeframe = result.rsiByTimeframe || {
+                            15: result.rsi15,
+                            30: result.rsi30,
+                            45: result.rsi45
+                        };
+                        asset.candleCloseByTimeframe = result.candleCloseByTimeframe || { 15: result.candleClose };
+                        asset.candleClosedAtByTimeframe = result.candleClosedAtByTimeframe || { 15: result.candleClosedAt };
+                        asset.strategyIndicatorsByTimeframe = result.strategyIndicatorsByTimeframe || {
+                            15: result.strategyIndicators
+                        };
+                        asset.atrByTimeframe = result.atrByTimeframe || { 15: result.atr };
                         asset.dataUpdatedAt = Date.now();
+                        applyTimeframeData(asset, selectedTimeframe);
                         if (hadError) {
                             logToConsole(`[${asset.symbol}] Live market values are available again.`, 'success');
                         } else if (!hadMarketData) {
@@ -291,7 +302,6 @@
                         }
                     });
                 } catch (error) {
-                    if (requestId !== marketDataRequestId) return;
                     customAssets.forEach(asset => {
                         const message = error instanceof Error ? error.message : 'Unable to retrieve market data.';
                         if (asset.marketDataError !== message) {
@@ -302,16 +312,38 @@
                         asset.rsi15 = null;
                         asset.rsi30 = null;
                         asset.rsi45 = null;
+                        asset.rsiByTimeframe = null;
+                        asset.candleCloseByTimeframe = null;
+                        asset.candleClosedAtByTimeframe = null;
                         asset.strategyRsi = null;
                         asset.strategyIndicators = null;
+                        asset.strategyIndicatorsByTimeframe = null;
                         asset.atr = null;
+                        asset.atrByTimeframe = null;
                         asset.candleClosedAt = null;
                         asset.dataProvider = null;
                     });
                 }
-            }
+                renderAssets();
+            })();
+            const trackedRequest = request.finally(() => {
+                if (marketDataRequestPromise === trackedRequest) {
+                    marketDataRequestPromise = null;
+                    marketDataRequestKey = null;
+                }
+            });
+            marketDataRequestPromise = trackedRequest;
+            marketDataRequestKey = requestKey;
+            return marketDataRequestPromise;
+        }
 
-            renderAssets();
+        function applyTimeframeData(asset, timeframe) {
+            const barsKey = String(timeframe);
+            asset.strategyRsi = asset.rsiByTimeframe?.[barsKey] ?? null;
+            asset.strategyIndicators = asset.strategyIndicatorsByTimeframe?.[barsKey] ?? null;
+            asset.candleClose = asset.candleCloseByTimeframe?.[barsKey] ?? null;
+            asset.candleClosedAt = asset.candleClosedAtByTimeframe?.[barsKey] ?? null;
+            asset.atr = asset.atrByTimeframe?.[barsKey] ?? null;
         }
 
         let selectedTimeframe = '15';
@@ -355,18 +387,13 @@
         function changeTimeframe(tf) {
             selectedTimeframe = tf;
             assets.forEach(asset => {
-                asset.candleClose = null;
-                asset.candleClosedAt = null;
-                asset.strategyRsi = null;
-                asset.strategyIndicators = null;
-                asset.atr = null;
+                applyTimeframeData(asset, tf);
             });
             document.getElementById('activeTimeframeBadge').textContent = selectedStrategy === 'rsi'
                 ? `Active View: ${tf}m RSI + Confluence`
                 : `Active View: ${tf}m ${strategyNames[selectedStrategy]}`;
             logToConsole(`Switching scanner timeframe to ${tf} minutes with ${strategyNames[selectedStrategy]}.`, 'info');
             renderAssets();
-            updateCustomMarketPrices(true);
         }
 
         const strategyNames = {
@@ -724,13 +751,12 @@
             timeframeSelect.disabled = true;
             strategySelect.disabled = true;
             grid.inert = true;
-            btn.innerHTML = `<i class="fa-solid fa-spinner animate-spin text-xs"></i><span>Refreshing candles (${scanTimeframe}m)...</span>`;
+            btn.innerHTML = `<i class="fa-solid fa-spinner animate-spin text-xs"></i><span>Checking candles (${scanTimeframe}m)...</span>`;
 
-            logToConsole(`Refreshing closed-candle data before scanning ${assets.length} tracked asset${assets.length === 1 ? '' : 's'}...`, 'info');
-            forcedRefreshInProgress = true;
+            logToConsole(`Checking latest closed-candle data before scanning ${assets.length} tracked asset${assets.length === 1 ? '' : 's'}...`, 'info');
             try {
-                await updateCustomMarketPrices(true, true);
-                logToConsole(`Evaluating ${strategyNames[scanStrategy]} setups using refreshed closed candles.`, 'info');
+                await updateCustomMarketPrices(true);
+                logToConsole(`Evaluating ${strategyNames[scanStrategy]} setups using the latest available closed candles.`, 'info');
                 assets.forEach(asset => {
                     const mb = checkMarketBreak(asset.isCrypto);
                     if (mb.isOnBreak) {
@@ -758,7 +784,6 @@
             } catch (error) {
                 logToConsole(`Scan could not complete: ${error.message || 'Market data refresh failed.'}`, 'error');
             } finally {
-                forcedRefreshInProgress = false;
                 grid.inert = false;
                 timeframeSelect.disabled = false;
                 strategySelect.disabled = false;
