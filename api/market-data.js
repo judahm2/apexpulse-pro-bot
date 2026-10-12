@@ -49,20 +49,25 @@ export default async function handler(req, res) {
           }
         }
 
+        const errors = [`Twelve Data: ${primaryError.message}`];
+        if (keylessCryptoError) errors.push(`Binance/Coinbase: ${keylessCryptoError.message}`);
+
         if (finnHubApiKey) {
           try {
             return await getFinnhubResult(symbol, cryptoSymbols.has(symbol), finnHubApiKey, timeframe);
           } catch (fallbackError) {
-            const errors = [`Twelve Data: ${primaryError.message}`];
-            if (keylessCryptoError) errors.push(`Binance/Coinbase: ${keylessCryptoError.message}`);
             errors.push(`Finnhub: ${fallbackError.message}`);
-            return { symbol, error: errors.join(' ') };
           }
         }
 
-        const errors = [`Twelve Data: ${primaryError.message}`];
-        if (keylessCryptoError) errors.push(`Binance/Coinbase: ${keylessCryptoError.message}`);
-        else if (!finnHubApiKey) errors.push('Configure FINNHUB_API_KEY to enable a backup provider.');
+        if (!isYahooSpotMetal(symbol)) {
+          try {
+            return await getYahooFinanceResult(symbol, cryptoSymbols.has(symbol), timeframe);
+          } catch (fallbackError) {
+            errors.push(`Yahoo Finance: ${fallbackError.message}`);
+          }
+        }
+
         return { symbol, error: errors.join(' ') };
       }
     }));
@@ -217,6 +222,42 @@ async function getFinnhubResult(symbol, isCrypto, apiKey, timeframe) {
     close: Number(close)
   }));
   return createMarketResult(symbol, candles, 'Finnhub', timeframe);
+}
+
+async function getYahooFinanceResult(symbol, isCrypto, timeframe) {
+  const ticker = getYahooFinanceSymbol(symbol, isCrypto);
+  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`);
+  url.search = new URLSearchParams({
+    range: '5d',
+    interval: '15m',
+    includePrePost: 'false'
+  }).toString();
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'Mozilla/5.0'
+    }
+  });
+  const data = await readProviderJson(response, 'Yahoo Finance');
+  const result = data.chart?.result?.[0];
+  if (!result || data.chart?.error) {
+    throw new Error(data.chart?.error?.description || `No candle data for ${ticker}.`);
+  }
+
+  const quote = result.indicators?.quote?.[0];
+  if (!quote || !Array.isArray(result.timestamp)) {
+    throw new Error('Provider returned an invalid candle response.');
+  }
+
+  const candles = result.timestamp.map((time, index) => ({
+    time: Number(time),
+    open: Number(quote.open?.[index]),
+    high: Number(quote.high?.[index]),
+    low: Number(quote.low?.[index]),
+    close: Number(quote.close?.[index])
+  }));
+  return createMarketResult(symbol, candles, 'Yahoo Finance', timeframe, result.meta?.currency);
 }
 
 async function readProviderJson(response, provider) {
@@ -408,6 +449,22 @@ function getFinnhubSymbol(symbol, isCrypto) {
     return `OANDA:${base}_${quote}`;
   }
   return symbol;
+}
+
+function getYahooFinanceSymbol(symbol, isCrypto) {
+  if (isCrypto && symbol.includes('/')) {
+    const [base, quote] = symbol.split('/');
+    return `${base}-${quote}`;
+  }
+  if (symbol.includes('/')) {
+    const [base, quote] = symbol.split('/');
+    return `${base}${quote}=X`;
+  }
+  return symbol;
+}
+
+function isYahooSpotMetal(symbol) {
+  return symbol === 'XAU/USD' || symbol === 'XAG/USD';
 }
 
 function calculateRSI(prices, period = 14) {

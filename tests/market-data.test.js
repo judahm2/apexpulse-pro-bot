@@ -122,3 +122,111 @@ test('silver uses the configured spot-market provider instead of a futures proxy
     else process.env.FINNHUB_API_KEY = originalFinnhubKey;
   }
 });
+
+test('Yahoo Finance supplies forex candles when the configured providers deny access', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  process.env.TWELVE_DATA_API_KEY = 'test-key';
+  process.env.FINNHUB_API_KEY = 'test-key';
+  const currentInterval = Math.floor(Date.now() / 900000) * 900000;
+  const timestamps = Array.from({ length: 150 }, (_, index) =>
+    Math.floor((currentInterval - ((150 - index) * 900000)) / 1000));
+  const close = timestamps.map((_, index) => 1.1 + (index * 0.0001));
+  const requestedHosts = [];
+  globalThis.fetch = async url => {
+    const requestUrl = new URL(url);
+    requestedHosts.push(requestUrl.hostname);
+    if (requestUrl.hostname === 'api.twelvedata.com') {
+      return new Response(JSON.stringify({ message: 'Symbol requires a higher plan.' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'finnhub.io') {
+      return new Response(JSON.stringify({ error: 'You do not have access to this resource.' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({
+      chart: {
+        result: [{
+          meta: { currency: 'USD' },
+          timestamp: timestamps,
+          indicators: {
+            quote: [{
+              open: close,
+              high: close.map(price => price + 0.0001),
+              low: close.map(price => price - 0.0001),
+              close
+            }]
+          }
+        }],
+        error: null
+      }
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const response = createResponse();
+    await handler({
+      method: 'GET',
+      query: { symbols: 'EUR/USD', timeframe: '15' }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(requestedHosts, [
+      'api.twelvedata.com',
+      'finnhub.io',
+      'query1.finance.yahoo.com'
+    ]);
+    assert.equal(response.body.results[0].provider, 'Yahoo Finance');
+    assert.ok(Number.isFinite(response.body.results[0].price));
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
+    else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
+    if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
+    else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+  }
+});
+
+test('spot metals never fall back to Yahoo futures', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  process.env.TWELVE_DATA_API_KEY = 'test-key';
+  process.env.FINNHUB_API_KEY = 'test-key';
+  const requestedHosts = [];
+  globalThis.fetch = async url => {
+    requestedHosts.push(new URL(url).hostname);
+    return new Response(JSON.stringify({ error: 'Access denied.' }), {
+      status: 403,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const response = createResponse();
+    await handler({
+      method: 'GET',
+      query: { symbols: 'XAU/USD', timeframe: '15' }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(requestedHosts, ['api.twelvedata.com', 'finnhub.io']);
+    assert.match(response.body.results[0].error, /Twelve Data/);
+    assert.match(response.body.results[0].error, /Finnhub/);
+    assert.doesNotMatch(response.body.results[0].error, /Yahoo Finance/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
+    else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
+    if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
+    else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+  }
+});
