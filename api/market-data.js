@@ -60,12 +60,10 @@ export default async function handler(req, res) {
           }
         }
 
-        if (!isYahooSpotMetal(symbol)) {
-          try {
-            return await getYahooFinanceResult(symbol, cryptoSymbols.has(symbol), timeframe);
-          } catch (fallbackError) {
-            errors.push(`Yahoo Finance: ${fallbackError.message}`);
-          }
+        try {
+          return await getYahooFinanceResult(symbol, cryptoSymbols.has(symbol), timeframe);
+        } catch (fallbackError) {
+          errors.push(`Yahoo Finance: ${fallbackError.message}`);
         }
 
         return { symbol, error: errors.join(' ') };
@@ -461,10 +459,6 @@ function getYahooFinanceSymbol(symbol, isCrypto) {
     return `${base}${quote}=X`;
   }
   return symbol;
-}
-
-function isYahooSpotMetal(symbol) {
-  return symbol === 'XAU/USD' || symbol === 'XAG/USD';
 }
 
 function calculateRSI(prices, period = 14) {

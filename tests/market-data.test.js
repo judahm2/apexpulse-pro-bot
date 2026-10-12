@@ -71,30 +71,52 @@ test('keyless crypto fallback returns closed candles and neutral RSI for flat pr
   }
 });
 
-test('silver uses the configured spot-market provider instead of a futures proxy', async () => {
+test('silver falls back to its Yahoo spot ticker when configured providers deny access', async () => {
   const originalFetch = globalThis.fetch;
   const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
   const originalFinnhubKey = process.env.FINNHUB_API_KEY;
   process.env.TWELVE_DATA_API_KEY = 'test-key';
-  delete process.env.FINNHUB_API_KEY;
+  process.env.FINNHUB_API_KEY = 'test-key';
   const currentInterval = Math.floor(Date.now() / 900000) * 900000;
-  const values = Array.from({ length: 150 }, (_, index) => {
-    const openTime = currentInterval - ((150 - index) * 900000);
-    const close = 30 + (index * 0.01);
-    return {
-      datetime: new Date(openTime).toISOString().slice(0, 19).replace('T', ' '),
-      open: String(close),
-      high: String(close + 0.1),
-      low: String(close - 0.1),
-      close: String(close)
-    };
-  }).reverse();
-  let requestedUrl;
+  const timestamps = Array.from({ length: 150 }, (_, index) =>
+    Math.floor((currentInterval - ((150 - index) * 900000)) / 1000));
+  const close = timestamps.map((_, index) => 30 + (index * 0.01));
+  const requestedUrls = [];
   globalThis.fetch = async url => {
-    requestedUrl = new URL(url);
+    const requestUrl = new URL(url);
+    requestedUrls.push(requestUrl);
+    if (requestUrl.hostname === 'api.twelvedata.com') {
+      return new Response(JSON.stringify({
+        message: 'This symbol is available starting with the Grow or Venture plan.'
+      }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'finnhub.io') {
+      return new Response(JSON.stringify({
+        error: "You don't have access to this resource."
+      }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
     return new Response(JSON.stringify({
-      meta: { currency: 'USD' },
-      values
+      chart: {
+        result: [{
+          meta: { currency: 'USD' },
+          timestamp: timestamps,
+          indicators: {
+            quote: [{
+              open: close,
+              high: close.map(price => price + 0.1),
+              low: close.map(price => price - 0.1),
+              close
+            }]
+          }
+        }],
+        error: null
+      }
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' }
@@ -110,10 +132,15 @@ test('silver uses the configured spot-market provider instead of a futures proxy
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.results.length, 1);
-    assert.equal(response.body.results[0].provider, 'Twelve Data');
+    assert.equal(response.body.results[0].provider, 'Yahoo Finance');
     assert.equal(response.body.results[0].currency, 'USD');
-    assert.equal(requestedUrl.hostname, 'api.twelvedata.com');
-    assert.equal(requestedUrl.searchParams.get('symbol'), 'XAG/USD');
+    assert.deepEqual(requestedUrls.map(url => url.hostname), [
+      'api.twelvedata.com',
+      'finnhub.io',
+      'query1.finance.yahoo.com'
+    ]);
+    assert.equal(decodeURIComponent(requestedUrls[2].pathname.split('/').pop()), 'XAGUSD=X');
+    assert.equal(response.body.results[0].price, close.at(-1));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
@@ -195,17 +222,50 @@ test('Yahoo Finance supplies forex candles when the configured providers deny ac
   }
 });
 
-test('spot metals never fall back to Yahoo futures', async () => {
+test('gold falls back to its Yahoo spot ticker instead of a futures proxy', async () => {
   const originalFetch = globalThis.fetch;
   const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
   const originalFinnhubKey = process.env.FINNHUB_API_KEY;
   process.env.TWELVE_DATA_API_KEY = 'test-key';
   process.env.FINNHUB_API_KEY = 'test-key';
-  const requestedHosts = [];
+  const currentInterval = Math.floor(Date.now() / 900000) * 900000;
+  const timestamps = Array.from({ length: 150 }, (_, index) =>
+    Math.floor((currentInterval - ((150 - index) * 900000)) / 1000));
+  const close = timestamps.map((_, index) => 2000 + index);
+  const requestedUrls = [];
   globalThis.fetch = async url => {
-    requestedHosts.push(new URL(url).hostname);
-    return new Response(JSON.stringify({ error: 'Access denied.' }), {
-      status: 403,
+    const requestUrl = new URL(url);
+    requestedUrls.push(requestUrl);
+    if (requestUrl.hostname === 'api.twelvedata.com') {
+      return new Response(JSON.stringify({ error: 'Access denied.' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'finnhub.io') {
+      return new Response(JSON.stringify({ error: 'Access denied.' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({
+      chart: {
+        result: [{
+          meta: { currency: 'USD' },
+          timestamp: timestamps,
+          indicators: {
+            quote: [{
+              open: close,
+              high: close.map(price => price + 1),
+              low: close.map(price => price - 1),
+              close
+            }]
+          }
+        }],
+        error: null
+      }
+    }), {
+      status: 200,
       headers: { 'content-type': 'application/json' }
     });
   };
@@ -218,10 +278,14 @@ test('spot metals never fall back to Yahoo futures', async () => {
     }, response);
 
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(requestedHosts, ['api.twelvedata.com', 'finnhub.io']);
-    assert.match(response.body.results[0].error, /Twelve Data/);
-    assert.match(response.body.results[0].error, /Finnhub/);
-    assert.doesNotMatch(response.body.results[0].error, /Yahoo Finance/);
+    assert.deepEqual(requestedUrls.map(url => url.hostname), [
+      'api.twelvedata.com',
+      'finnhub.io',
+      'query1.finance.yahoo.com'
+    ]);
+    assert.equal(decodeURIComponent(requestedUrls[2].pathname.split('/').pop()), 'XAUUSD=X');
+    assert.equal(response.body.results[0].provider, 'Yahoo Finance');
+    assert.equal(response.body.results[0].price, close.at(-1));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
