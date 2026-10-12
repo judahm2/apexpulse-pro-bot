@@ -134,7 +134,7 @@
         </div>
 
         <p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3">
-            Alerts are technical setups for review, not instructions or personalized financial advice. Reference levels are illustrative scenarios only and do not account for spread, slippage, or your risk limits.
+            Execution signal levels are trade-planning references for live review. Use them as actionable entry, invalidation, and 2R planning inputs after your own spread, slippage, and risk checks.
         </p>
 
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
@@ -632,7 +632,7 @@
                         <div class="text-center py-1.5 px-3 rounded-xl border text-xs font-semibold ${signalObj.style}">
                             ${escapeHtml(signalObj.text)}
                         </div>
-                        ${referencePlan ? `<div class="text-[10px] text-slate-400 text-center mt-2">Illustrative reference only • Entry ${referencePlan.entry} • Invalidation ${referencePlan.invalidation} • 2R scenario ${referencePlan.target}</div>` : ''}
+                        ${referencePlan ? `<div class="text-[10px] text-slate-400 text-center mt-2">Execution signal • Entry ${referencePlan.entry} • Invalidation ${referencePlan.invalidation} • 2R target ${referencePlan.target}</div>` : ''}
                     </div>
                 `;
                 grid.appendChild(card);
@@ -767,10 +767,10 @@
                             logToConsole(`[${asset.symbol}] Scan skipped: ${getDataQuality(asset, scanTimeframe).label}.`, 'alert');
                         } else if (sig.raw === 'BUY') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Bullish setup detected (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Illustrative reference: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R scenario ${plan.target}.` : 'ATR reference levels unavailable.'}`, 'success');
+                            logToConsole(`[${asset.symbol}] Execution signal: BUY (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Signal plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'ATR execution levels unavailable.'}`, 'success');
                         } else if (sig.raw === 'SELL') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Bearish setup detected (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Illustrative reference: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R scenario ${plan.target}.` : 'ATR reference levels unavailable.'}`, 'alert');
+                            logToConsole(`[${asset.symbol}] Execution signal: SELL (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Signal plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'ATR execution levels unavailable.'}`, 'alert');
                         } else {
                             logToConsole(`[${asset.symbol}] No setup under the selected strategy (${scanTimeframe}m).`, 'info');
                         }
