@@ -620,7 +620,7 @@
 
             const previous = lastObservedTradeStates.get(key);
             lastObservedTradeStates.set(key, { closedAt, signal: signal.raw });
-            if (!autoScanEnabled || !['BUY', 'SELL'].includes(signal.raw)) return;
+            if (!autoScanEnabled) return;
 
             const isNewClosedCandle = !previous || closedAt > previous.closedAt;
             const isNewTradeSignal = !previous || previous.signal !== signal.raw;
@@ -628,14 +628,25 @@
                 Date.now() - closedAt > (Number(selectedTimeframe) * 60 * 1000) + (2 * 60 * 1000)) return;
 
             const plan = getReferencePlan(asset, signal);
-            if (!plan) return;
             const alertKey = `${key}:${closedAt}:${signal.raw}`;
             if (observedTradeAlertKeys.has(alertKey)) return;
+            if (['BUY', 'SELL'].includes(signal.raw) && !plan) return;
+            if (!['BUY', 'SELL', 'HOLD'].includes(signal.raw)) return;
             observedTradeAlertKeys.add(alertKey);
-            const direction = signal.raw === 'SELL' ? 'SELL / SHORT' : 'BUY';
-            const body = `${asset.symbol} ${direction} setup on ${selectedTimeframe}m. Entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}. ${asset.dataProvider}; candle closed ${new Date(closedAt).toLocaleString()}.`;
+            if (observedTradeAlertKeys.size > 500) {
+                observedTradeAlertKeys.delete(observedTradeAlertKeys.values().next().value);
+            }
+            const alert = createTradeAlert(asset, signal, plan);
+            if (signal.raw === 'HOLD') {
+                logToConsole(JSON.stringify(alert), 'info');
+                return;
+            }
 
-            logToConsole(`Auto-scan found a new ${direction} setup. ${body}`, signal.raw === 'BUY' ? 'success' : 'alert');
+            const direction = signal.raw === 'SELL' ? 'SELL / SHORT' : 'BUY';
+            const indicators = alert.market.indicators;
+            const body = `${direction} ${asset.symbol} • ${signal.confidence} confidence. ${signal.reason} Price ${alert.market.price} ${alert.market.currency}; RSI 15/30/45m ${indicators.rsi15}/${indicators.rsi30}/${indicators.rsi45}. Entry ${plan.entry}, stop ${plan.invalidation}, 2R target ${plan.target}. Position size not calculated; apply account-specific risk limits. ${alert.timestamp}`;
+
+            logToConsole(JSON.stringify(alert), signal.raw === 'BUY' ? 'success' : 'alert');
             if (!tradeAlertsEnabled) return;
 
             try {
@@ -649,6 +660,47 @@
             } catch (error) {
                 logToConsole(`Browser trade notification failed: ${error.message || 'Notification could not be displayed.'}`, 'error');
             }
+        }
+
+        function createTradeAlert(asset, signal, plan) {
+            const indicators = asset.strategyIndicators || {};
+            const closedAt = new Date(asset.candleClosedAt).toISOString();
+            return {
+                action: signal.raw,
+                reason: signal.reason,
+                confidence: signal.confidence,
+                timestamp: new Date().toISOString(),
+                market: {
+                    symbol: asset.symbol,
+                    timeframe: `${selectedTimeframe}m`,
+                    provider: asset.dataProvider,
+                    price: asset.candleClose,
+                    currency: asset.currency,
+                    candleClosedAt: closedAt,
+                    indicators: {
+                        rsi15: formatAlertValue(asset.rsi15),
+                        rsi30: formatAlertValue(asset.rsi30),
+                        rsi45: formatAlertValue(asset.rsi45),
+                        ema9: formatAlertValue(indicators.ema9),
+                        ema21: formatAlertValue(indicators.ema21),
+                        macd: formatAlertValue(indicators.macd),
+                        macdSignal: formatAlertValue(indicators.macdSignal),
+                        atr: formatAlertValue(asset.atr)
+                    }
+                },
+                risk: plan ? {
+                    entry: asset.candleClose,
+                    stopLoss: plan.invalidationValue,
+                    takeProfit: plan.targetValue,
+                    riskRewardRatio: '2:1',
+                    positionSize: null,
+                    positionSizingNote: 'Not calculated; apply account- and instrument-specific risk limits before trading.'
+                } : null
+            };
+        }
+
+        function formatAlertValue(value) {
+            return Number.isFinite(value) ? Number(value.toPrecision(8)) : null;
         }
 
         /**
@@ -684,12 +736,12 @@
         function getDayTradingSignal(asset, tf) {
             const dataQuality = getDataQuality(asset, tf);
             if (!dataQuality.valid) {
-                return { text: dataQuality.label.toUpperCase(), style: 'bg-amber-500/10 text-amber-300 border-amber-500/30', raw: 'UNAVAILABLE' };
+                return createStrategySignal('UNAVAILABLE', dataQuality.label.toUpperCase(), 'bg-amber-500/10 text-amber-300 border-amber-500/30', dataQuality.label, 'LOW');
             }
 
             const marketBreak = checkMarketBreak(asset.isCrypto);
             if (marketBreak.isOnBreak) {
-                return { text: `MARKET ON BREAK (Paused)`, style: 'bg-amber-500/10 text-amber-400 border-amber-500/30', raw: 'PAUSED' };
+                return createStrategySignal('PAUSED', 'MARKET ON BREAK (Paused)', 'bg-amber-500/10 text-amber-400 border-amber-500/30', marketBreak.reason, 'LOW');
             }
 
             if (selectedStrategy === 'emaMacd') return getEmaMacdSignal(asset, tf);
@@ -697,31 +749,38 @@
 
             let primaryRsi = asset.rsi15;
             let secondaryRsi = asset.rsi30;
-            if (tf === '30') { primaryRsi = asset.rsi30; secondaryRsi = asset.rsi45; }
-            if (tf === '45') { primaryRsi = asset.rsi45; secondaryRsi = asset.rsi30; }
+            let secondaryTimeframe = '30';
+            if (tf === '30') { primaryRsi = asset.rsi30; secondaryRsi = asset.rsi45; secondaryTimeframe = '45'; }
+            if (tf === '45') { primaryRsi = asset.rsi45; secondaryRsi = asset.rsi30; secondaryTimeframe = '30'; }
 
             if (!Number.isFinite(primaryRsi) || !Number.isFinite(secondaryRsi)) {
-                return { text: 'DATA UNAVAILABLE', style: 'bg-slate-800 text-slate-400 border-slate-700', raw: 'UNAVAILABLE' };
+                return createStrategySignal('UNAVAILABLE', 'DATA UNAVAILABLE', 'bg-slate-800 text-slate-400 border-slate-700', 'RSI history is insufficient for the selected timeframes.', 'LOW');
             }
 
-            // Strategy Confluence Checks
             const isOversoldConfluent = primaryRsi <= 30 && secondaryRsi <= 38;
             const isOverboughtConfluent = primaryRsi >= 70 && secondaryRsi >= 62;
+            const indicators = asset.strategyIndicators || {};
+            const bullishTrend = indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal;
+            const bearishTrend = indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal;
+            const isHighConfidenceBuy = primaryRsi <= 25 && secondaryRsi <= 30 && bullishTrend;
+            const isHighConfidenceSell = primaryRsi >= 75 && secondaryRsi >= 70 && bearishTrend;
 
             if (isOversoldConfluent) {
-                return { text: `BULLISH SETUP (${tf}m RSI Confluence)`, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', raw: 'BUY' };
+                const reason = `${tf}m RSI ${primaryRsi.toFixed(1)} is oversold (≤30) and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms (≤38); EMA/MACD trend ${bullishTrend ? 'is bullish' : 'does not confirm bullishly'}.`;
+                return createStrategySignal('BUY', `BULLISH SETUP (${tf}m RSI Confluence)`, 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', reason, isHighConfidenceBuy ? 'HIGH' : 'MEDIUM');
             }
             if (isOverboughtConfluent) {
-                return { text: `BEARISH SETUP (${tf}m RSI Confluence)`, style: 'bg-rose-500/10 text-rose-400 border-rose-500/30', raw: 'SELL' };
+                const reason = `${tf}m RSI ${primaryRsi.toFixed(1)} is overbought (≥70) and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms (≥62); EMA/MACD trend ${bearishTrend ? 'is bearish' : 'does not confirm bearishly'}.`;
+                return createStrategySignal('SELL', `BEARISH SETUP (${tf}m RSI Confluence)`, 'bg-rose-500/10 text-rose-400 border-rose-500/30', reason, isHighConfidenceSell ? 'HIGH' : 'MEDIUM');
             }
 
-            return { text: `FILTERED HOLD (${tf}m No Confluence)`, style: 'bg-slate-800 text-slate-300 border-slate-700', raw: 'HOLD' };
+            return createStrategySignal('HOLD', `FILTERED HOLD (${tf}m No Confluence)`, 'bg-slate-800 text-slate-300 border-slate-700', `No RSI entry confluence: ${tf}m RSI ${primaryRsi.toFixed(1)} must be ≤30 or ≥70 and ${secondaryTimeframe}m RSI must confirm.`, 'LOW');
         }
 
         function getEmaMacdSignal(asset, tf) {
             const indicators = asset.strategyIndicators;
             if (!indicators || !Object.values(indicators).every(Number.isFinite)) {
-                return { text: 'DATA UNAVAILABLE', style: 'bg-slate-800 text-slate-400 border-slate-700', raw: 'UNAVAILABLE' };
+                return createStrategySignal('UNAVAILABLE', 'DATA UNAVAILABLE', 'bg-slate-800 text-slate-400 border-slate-700', 'EMA and MACD indicators are unavailable.', 'LOW');
             }
 
             const crossedUp = indicators.previousEma9 <= indicators.previousEma21 &&
@@ -730,15 +789,19 @@
             const crossedDown = indicators.previousEma9 >= indicators.previousEma21 &&
                 indicators.ema9 < indicators.ema21 &&
                 indicators.macd < indicators.macdSignal;
+            const rsiConfirmsBuy = asset.strategyRsi > 50;
+            const rsiConfirmsSell = asset.strategyRsi < 50;
 
             if (crossedUp) {
-                return { text: `EMA BULLISH CROSS (${tf}m MACD Confirmed)`, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', raw: 'BUY' };
+                const reason = `EMA9 crossed above EMA21 (${indicators.ema9.toFixed(4)} > ${indicators.ema21.toFixed(4)}); MACD ${indicators.macd.toFixed(4)} is above its signal ${indicators.macdSignal.toFixed(4)}${rsiConfirmsBuy ? `; RSI ${asset.strategyRsi.toFixed(1)} confirms momentum` : `; RSI ${formatAlertValue(asset.strategyRsi) ?? 'unavailable'} does not confirm momentum`}.`;
+                return createStrategySignal('BUY', `EMA BULLISH CROSS (${tf}m MACD Confirmed)`, 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', reason, rsiConfirmsBuy ? 'HIGH' : 'MEDIUM');
             }
             if (crossedDown) {
-                return { text: `EMA BEARISH CROSS (${tf}m MACD Confirmed)`, style: 'bg-rose-500/10 text-rose-400 border-rose-500/30', raw: 'SELL' };
+                const reason = `EMA9 crossed below EMA21 (${indicators.ema9.toFixed(4)} < ${indicators.ema21.toFixed(4)}); MACD ${indicators.macd.toFixed(4)} is below its signal ${indicators.macdSignal.toFixed(4)}${rsiConfirmsSell ? `; RSI ${asset.strategyRsi.toFixed(1)} confirms momentum` : `; RSI ${formatAlertValue(asset.strategyRsi) ?? 'unavailable'} does not confirm momentum`}.`;
+                return createStrategySignal('SELL', `EMA BEARISH CROSS (${tf}m MACD Confirmed)`, 'bg-rose-500/10 text-rose-400 border-rose-500/30', reason, rsiConfirmsSell ? 'HIGH' : 'MEDIUM');
             }
 
-            return { text: `WAITING FOR EMA CROSS (${tf}m)`, style: 'bg-slate-800 text-slate-300 border-slate-700', raw: 'HOLD' };
+            return createStrategySignal('HOLD', `WAITING FOR EMA CROSS (${tf}m)`, 'bg-slate-800 text-slate-300 border-slate-700', `No fresh EMA9/EMA21 crossover with MACD confirmation on the ${tf}m timeframe.`, 'LOW');
         }
 
         function getBollingerRsiSignal(asset, tf) {
@@ -747,17 +810,25 @@
                 !Number.isFinite(asset.strategyRsi) ||
                 !Number.isFinite(indicators.lowerBand) ||
                 !Number.isFinite(indicators.upperBand)) {
-                return { text: 'DATA UNAVAILABLE', style: 'bg-slate-800 text-slate-400 border-slate-700', raw: 'UNAVAILABLE' };
+                return createStrategySignal('UNAVAILABLE', 'DATA UNAVAILABLE', 'bg-slate-800 text-slate-400 border-slate-700', 'Bollinger Bands or RSI are unavailable.', 'LOW');
             }
 
             if (asset.candleClose <= indicators.lowerBand && asset.strategyRsi <= 30) {
-                return { text: `LOWER BAND + OVERSOLD (${tf}m)`, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', raw: 'BUY' };
+                const macdConfirms = indicators.macd > indicators.macdSignal;
+                const reason = `${tf}m candle close ${asset.candleClose.toFixed(4)} is at/below the lower Bollinger Band ${indicators.lowerBand.toFixed(4)} and RSI is ${asset.strategyRsi.toFixed(1)} (≤30); MACD ${macdConfirms ? 'confirms bullish momentum' : 'does not confirm bullish momentum'}.`;
+                return createStrategySignal('BUY', `LOWER BAND + OVERSOLD (${tf}m)`, 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', reason, macdConfirms ? 'HIGH' : 'MEDIUM');
             }
             if (asset.candleClose >= indicators.upperBand && asset.strategyRsi >= 70) {
-                return { text: `UPPER BAND + OVERBOUGHT (${tf}m)`, style: 'bg-rose-500/10 text-rose-400 border-rose-500/30', raw: 'SELL' };
+                const macdConfirms = indicators.macd < indicators.macdSignal;
+                const reason = `${tf}m candle close ${asset.candleClose.toFixed(4)} is at/above the upper Bollinger Band ${indicators.upperBand.toFixed(4)} and RSI is ${asset.strategyRsi.toFixed(1)} (≥70); MACD ${macdConfirms ? 'confirms bearish momentum' : 'does not confirm bearish momentum'}.`;
+                return createStrategySignal('SELL', `UPPER BAND + OVERBOUGHT (${tf}m)`, 'bg-rose-500/10 text-rose-400 border-rose-500/30', reason, macdConfirms ? 'HIGH' : 'MEDIUM');
             }
 
-            return { text: `WAITING FOR BAND + RSI (${tf}m)`, style: 'bg-slate-800 text-slate-300 border-slate-700', raw: 'HOLD' };
+            return createStrategySignal('HOLD', `WAITING FOR BAND + RSI (${tf}m)`, 'bg-slate-800 text-slate-300 border-slate-700', `No lower/upper Bollinger Band touch with a confirming RSI extreme on the ${tf}m timeframe.`, 'LOW');
+        }
+
+        function createStrategySignal(raw, text, style, reason, confidence) {
+            return { raw, text, style, reason, confidence };
         }
 
         function getReferencePlan(asset, signal) {
@@ -775,7 +846,9 @@
                 entry: format(entry),
                 invalidation: format(invalidation),
                 target: format(target),
-                riskDistance: format(riskDistance)
+                riskDistance: format(riskDistance),
+                invalidationValue: invalidation,
+                targetValue: target
             };
         }
 
@@ -911,6 +984,10 @@
                     <div class="pt-1">
                         <div class="text-center py-1.5 px-3 rounded-xl border text-xs font-semibold ${signalObj.style}">
                             ${escapeHtml(signalObj.text)}
+                        </div>
+                        <div class="mt-2 text-[10px] leading-relaxed text-slate-400">
+                            <span class="font-semibold ${signalObj.confidence === 'HIGH' ? 'text-emerald-300' : signalObj.confidence === 'MEDIUM' ? 'text-amber-300' : 'text-slate-300'}">${escapeHtml(signalObj.confidence)} CONFIDENCE</span>
+                            <span aria-hidden="true"> • </span>${escapeHtml(signalObj.reason)}
                         </div>
                         <section aria-label="Trade decision" class="mt-3 rounded-xl border border-borderCol bg-slate-950/50 p-3 space-y-3">
                             <h3 class="text-[10px] uppercase tracking-wider font-semibold ${decision.style}">${decision.label}</h3>
