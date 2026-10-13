@@ -1,9 +1,14 @@
+import { randomUUID } from 'node:crypto';
+import { Redis } from '@upstash/redis';
+
 const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{0,19}$/;
 const BASE_INTERVAL_SECONDS = 15 * 60;
 const TIMEFRAMES = [15, 30, 45];
 const TWELVE_DATA_CACHE_TTL_MS = 60 * 1000;
 const PROVIDER_ERROR_CACHE_TTL_MS = 60 * 1000;
 const twelveDataCache = new Map();
+let sharedRedis;
+let redisConfigurationWarningLogged = false;
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -38,7 +43,11 @@ export default async function handler(req, res) {
   const fmpApiKey = process.env.FMP_API_KEY;
 
   try {
-    const results = await Promise.all(symbols.map(async symbol => {
+    const results = await Promise.all(symbols.map(symbol => getSharedCachedMarketResult(
+      symbol,
+      timeframe,
+      cryptoSymbols.has(symbol),
+      async () => {
       const errors = [];
       try {
         if (!twelveDataKey) throw new Error('TWELVE_DATA_API_KEY is not configured.');
@@ -162,13 +171,106 @@ export default async function handler(req, res) {
         errors.map(error => error.slice(0, error.indexOf(': ')))
       );
       return { symbol, error: 'No data found due to API.' };
-    }));
+      }
+    )));
 
     return res.status(200).json({ results });
   } catch (error) {
     console.error('Market data request failed:', error);
     return res.status(502).json({ error: 'Unable to retrieve market data right now.' });
   }
+}
+
+async function getSharedCachedMarketResult(symbol, timeframe, isCrypto, loadResult) {
+  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!redisUrl || !redisToken) {
+    if (!redisConfigurationWarningLogged) {
+      console.warn('Upstash Redis is not configured; market-data requests will bypass the shared cache.');
+      redisConfigurationWarningLogged = true;
+    }
+    return loadResult();
+  }
+
+  let redis;
+  try {
+    redis = getSharedRedis(redisUrl, redisToken);
+  } catch (error) {
+    console.error('Unable to configure shared market-data cache:', error.message);
+    return loadResult();
+  }
+  const cacheKey = `market-data:v1:${symbol}:${timeframe}:${isCrypto ? 'crypto' : 'other'}`;
+  const lockKey = `${cacheKey}:refresh-lock`;
+  try {
+    const cachedResult = await redis.get(cacheKey);
+    if (cachedResult !== null) return cachedResult;
+  } catch (error) {
+    console.error('Unable to read shared market-data cache:', error.message);
+    return loadResult();
+  }
+
+  const lockToken = randomUUID();
+  let lockAcquired = false;
+  try {
+    lockAcquired = (await redis.set(lockKey, lockToken, { nx: true, ex: 30 })) === 'OK';
+  } catch (error) {
+    console.error('Unable to acquire shared market-data cache lock:', error.message);
+    return loadResult();
+  }
+
+  if (!lockAcquired) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      try {
+        const cachedResult = await redis.get(cacheKey);
+        if (cachedResult !== null) return cachedResult;
+      } catch (error) {
+        console.error('Unable to read shared market-data cache while waiting:', error.message);
+        return loadResult();
+      }
+    }
+    console.warn(`Shared market-data cache refresh timed out for ${symbol}; loading independently.`);
+    return loadResult();
+  }
+
+  try {
+    const cachedResult = await redis.get(cacheKey);
+    if (cachedResult !== null) return cachedResult;
+
+    const result = await loadResult();
+    try {
+      await redis.set(cacheKey, result, {
+        ex: getMarketResultCacheTtlSeconds(result)
+      });
+    } catch (error) {
+      console.error('Unable to write shared market-data cache:', error.message);
+    }
+    return result;
+  } finally {
+    try {
+      await redis.eval(
+        'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end',
+        [lockKey],
+        [lockToken]
+      );
+    } catch (error) {
+      console.error('Unable to release shared market-data cache lock:', error.message);
+    }
+  }
+}
+
+function getSharedRedis(url, token) {
+  if (!sharedRedis) sharedRedis = new Redis({ url, token });
+  return sharedRedis;
+}
+
+function getMarketResultCacheTtlSeconds(result) {
+  const latest15mCandleClosedAt = result.candleClosedAtByTimeframe?.['15'] ?? result.candleClosedAt;
+  if (!Number.isFinite(latest15mCandleClosedAt)) return 30;
+
+  const nextCandleCloseAt = latest15mCandleClosedAt + (BASE_INTERVAL_SECONDS * 1000);
+  const untilNextCloseSeconds = Math.ceil((nextCandleCloseAt - Date.now()) / 1000);
+  return Math.max(30, untilNextCloseSeconds);
 }
 
 async function verifyMarketResult(result, { symbol, timeframe, cryptoSymbols, finnHubApiKey }) {

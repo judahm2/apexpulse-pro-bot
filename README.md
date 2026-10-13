@@ -8,6 +8,20 @@ Exchange API references: [Coinbase candles](https://docs.cdp.coinbase.com/exchan
 
 Keyed provider references: [StockData.org documentation](https://www.stockdata.org/documentation), [Finage forex intraday documentation](https://finage.co.uk/docs/api/forex/forex-intraday-prices), and [Financial Modeling Prep documentation](https://site.financialmodelingprep.com/developer/docs).
 
+### Shared serverless cache (Upstash Redis)
+
+The market-data API uses Upstash Redis when `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are configured. Cached closed-candle results are shared across serverless instances, dashboard users, and the scheduled scanner. A short-lived Redis lock prevents simultaneous cache misses from issuing duplicate provider requests; cache entries expire at the next expected 15-minute candle close. If Redis is not configured or temporarily unavailable, the API logs the cache problem and continues with the market-data providers.
+
+To configure the free Upstash Redis database with Vercel:
+
+1. Create a Redis database in the [Upstash Console](https://console.upstash.com/) and keep it on the Free plan. Select a region close to the Vercel deployment.
+2. Open the database details and copy its **REST URL** and **REST token**. Treat the token as a password.
+3. In Vercel, open the project **Settings → Environment Variables**. Add `UPSTASH_REDIS_REST_URL` with the REST URL and `UPSTASH_REDIS_REST_TOKEN` with the REST token. Select every environment where the dashboard is deployed (Production, and Preview if applicable).
+4. Save the variables and redeploy the latest deployment so the serverless function receives them.
+5. Open the deployed dashboard and run a scan. Check the Upstash database metrics for commands; simultaneous users requesting the same symbol/timeframe should reuse the same cached result. After a new 15-minute candle closes, one request refreshes the cache and the other callers reuse it.
+
+The REST credentials are read only by the serverless API; do not add them to browser code, commit them, or put them in DNS settings. The browser may keep polling every minute, but provider requests are shared and normally happen once per closed 15-minute candle for each symbol. Without configured Upstash credentials, provider requests bypass this shared cache.
+
 When Twelve Data succeeds and `FINNHUB_API_KEY` is configured, Finnhub is queried as an independent comparison source. If a provider fails, the asset-specific fallback chain is tried for the same instrument. Configure `TWELVE_DATA_API_KEY`, `FINNHUB_API_KEY`, `STOCKDATA_API_TOKEN`, `FINAGE_API_KEY`, and `FMP_API_KEY` as server-side environment variables for local development and deployment. StockData.org's intraday feed is for US-listed stocks, and StockData describes its data as indicative and not appropriate for trading; Finage and FMP intraday symbols, history, and access depend on each account's plan. Styvio is intentionally excluded from this provider chain. Coinbase, Kraken, and Binance endpoints are public and require no API key; availability and supported spot pairs vary by exchange. These exchange feeds apply only to crypto and represent exchange-specific prices, which may differ from broker prices. There is no free intraday fallback feed substituted for spot FX or metals, so unsupported instruments remain unavailable instead of using a futures or unrelated proxy. `requirements.txt` installs yfinance for the Python function. Do not expose provider keys in browser code. When all configured sources fail, the dashboard displays **“No data found due to API.”**; detailed provider errors are kept out of the user-facing message.
 
 ## Market scanning and alerts

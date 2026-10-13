@@ -134,6 +134,124 @@ test('Twelve Data is cross-checked with Finnhub on traditional and crypto assets
   }
 });
 
+test('Upstash shared cache reuses market results until the next closed 15m candle', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalFinageApiKey = process.env.FINAGE_API_KEY;
+  const originalRedisUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const originalRedisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  process.env.TWELVE_DATA_API_KEY = 'test-twelve-key';
+  delete process.env.FINNHUB_API_KEY;
+  process.env.FINAGE_API_KEY = 'test-finage-key';
+  process.env.UPSTASH_REDIS_REST_URL = 'https://redis.test';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'test-redis-token';
+  const candles = createCandles();
+  const redisValues = new Map();
+  const redisCommands = [];
+  const providerRequests = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const requestUrl = new URL(input);
+    if (requestUrl.hostname === 'redis.test') {
+      const commands = JSON.parse(init.body);
+      const results = commands.map(command => {
+        redisCommands.push(command);
+        const [operation, ...args] = command;
+        if (operation === 'get') return { result: redisValues.get(args[0]) ?? null };
+        if (operation === 'set') {
+          const [key, value, ...options] = args;
+          if (options.includes('nx') && redisValues.has(key)) return { result: null };
+          redisValues.set(key, value);
+          return { result: 'OK' };
+        }
+        if (operation === 'eval') {
+          const [script, keyCount, key, token] = args;
+          assert.equal(Number(keyCount), 1);
+          if (script.includes('redis.call("del"') && redisValues.get(key) === token) {
+            redisValues.delete(key);
+            return { result: 1 };
+          }
+          return { result: 0 };
+        }
+        throw new Error(`Unexpected Redis command: ${operation}`);
+      });
+      return new Response(JSON.stringify(results), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+
+    providerRequests.push(requestUrl);
+    if (requestUrl.hostname === 'api.twelvedata.com') {
+      return new Response(JSON.stringify({ message: 'Provider unavailable.' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'api.finage.co.uk') {
+      return new Response(JSON.stringify({
+        results: candles.map(candle => ({
+          t: candle.time * 1000,
+          o: candle.open,
+          h: candle.high,
+          l: candle.low,
+          c: candle.close,
+          v: candle.volume
+        }))
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    throw new Error(`Unexpected market-data provider: ${requestUrl.hostname}`);
+  };
+
+  try {
+    const firstResponse = createResponse();
+    const secondResponse = createResponse();
+    await Promise.all([
+      handler({
+        method: 'GET',
+        query: { symbols: 'CAD/JPY', timeframe: '15' }
+      }, firstResponse),
+      handler({
+        method: 'GET',
+        query: { symbols: 'CAD/JPY', timeframe: '15' }
+      }, secondResponse)
+    ]);
+
+    assert.equal(firstResponse.statusCode, 200);
+    assert.equal(secondResponse.statusCode, 200);
+    assert.deepEqual(secondResponse.body.results, firstResponse.body.results);
+    assert.equal(providerRequests.filter(url => url.hostname === 'api.finage.co.uk').length, 1);
+    assert.ok(redisCommands.some(command =>
+      command[0] === 'set' &&
+      command[1] === 'market-data:v1:CAD/JPY:15:other' &&
+      command.includes('ex')
+    ));
+    assert.ok(redisCommands.some(command =>
+      command[0] === 'set' &&
+      command[1] === 'market-data:v1:CAD/JPY:15:other:refresh-lock' &&
+      command.includes('nx')
+    ));
+    assert.ok(redisCommands.some(command =>
+      command[0] === 'get' &&
+      command[1] === 'market-data:v1:CAD/JPY:15:other'
+    ));
+    assert.equal(JSON.stringify(secondResponse.body).includes('test-redis-token'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
+    else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
+    if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
+    else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    if (originalFinageApiKey === undefined) delete process.env.FINAGE_API_KEY;
+    else process.env.FINAGE_API_KEY = originalFinageApiKey;
+    if (originalRedisUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
+    else process.env.UPSTASH_REDIS_REST_URL = originalRedisUrl;
+    if (originalRedisToken === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    else process.env.UPSTASH_REDIS_REST_TOKEN = originalRedisToken;
+  }
+});
+
 test('Finnhub serves as fallback for all assets when Twelve Data fails', async () => {
   const originalFetch = globalThis.fetch;
   const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;

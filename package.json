@@ -17,5 +17,8 @@
   "bugs": {
     "url": "https://github.com/judahm2/apexpulse-pro-bot/issues"
   },
-  "homepage": "https://github.com/judahm2/apexpulse-pro-bot#readme"
+  "homepage": "https://github.com/judahm2/apexpulse-pro-bot#readme",
+  "dependencies": {
+    "@upstash/redis": "^1.39.0"
+  }
 }
