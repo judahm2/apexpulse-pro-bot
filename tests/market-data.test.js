@@ -251,6 +251,79 @@ test('silver falls back to its Yahoo spot ticker when configured providers deny 
   }
 });
 
+test('silver returns a Gold API spot-only quote when candle feeds are unavailable', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalOandaToken = process.env.OANDA_API_TOKEN;
+  const originalOandaAccountId = process.env.OANDA_ACCOUNT_ID;
+  process.env.TWELVE_DATA_API_KEY = 'test-key';
+  process.env.FINNHUB_API_KEY = 'test-key';
+  delete process.env.OANDA_API_TOKEN;
+  delete process.env.OANDA_ACCOUNT_ID;
+  const updatedAt = new Date().toISOString();
+  const requestedUrls = [];
+  globalThis.fetch = async url => {
+    const requestUrl = new URL(url);
+    requestedUrls.push(requestUrl);
+    if (requestUrl.hostname === 'api.gold-api.com') {
+      return new Response(JSON.stringify({
+        symbol: 'XAG',
+        currency: 'USD',
+        price: 60.52,
+        updatedAt
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    const status = requestUrl.hostname === 'api.twelvedata.com' ? 404
+      : requestUrl.hostname === 'finnhub.io' ? 403
+        : 404;
+    return new Response(JSON.stringify({ message: 'Feed unavailable.' }), {
+      status,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const response = createResponse();
+    await handler({
+      method: 'GET',
+      query: { symbols: 'XAG/USD', timeframe: '15' }
+    }, response);
+
+    const result = response.body.results[0];
+    assert.equal(response.statusCode, 200);
+    assert.equal(result.provider, 'Gold API');
+    assert.equal(result.spotOnly, true);
+    assert.equal(result.price, 60.52);
+    assert.equal(result.currency, 'USD');
+    assert.equal(result.quoteUpdatedAt, updatedAt);
+    assert.equal(result.candleClosedAt, undefined);
+    assert.equal(result.marketDiagnostics, undefined);
+    assert.equal(result.sourceVerification.status, 'unavailable');
+    assert.match(result.sourceVerification.reason, /no historical candles/i);
+    assert.ok(result.marketSources.some(source => source.provider === 'Yahoo Finance' && source.error));
+    assert.deepEqual(requestedUrls.map(url => url.hostname), [
+      'api.twelvedata.com',
+      'finnhub.io',
+      'query1.finance.yahoo.com',
+      'api.gold-api.com'
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
+    else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
+    if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
+    else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    if (originalOandaToken === undefined) delete process.env.OANDA_API_TOKEN;
+    else process.env.OANDA_API_TOKEN = originalOandaToken;
+    if (originalOandaAccountId === undefined) delete process.env.OANDA_ACCOUNT_ID;
+    else process.env.OANDA_ACCOUNT_ID = originalOandaAccountId;
+  }
+});
+
 test('silver uses completed OANDA spot candles when configured providers deny access', async () => {
   const originalFetch = globalThis.fetch;
   const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;

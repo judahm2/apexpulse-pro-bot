@@ -135,6 +135,38 @@ export default async function handler(req, res) {
           errors.push(`Yahoo Finance: ${fallbackError.message}`);
         }
 
+        if (symbol === 'XAG/USD') {
+          try {
+            const quote = await getGoldApiSilverQuote();
+            return {
+              symbol,
+              ...quote,
+              provider: 'Gold API',
+              spotOnly: true,
+              marketSources: [
+                ...errors.map(error => {
+                  const separator = error.indexOf(': ');
+                  return {
+                    provider: separator < 0 ? 'Market data' : error.slice(0, separator),
+                    error: separator < 0 ? error : error.slice(separator + 2)
+                  };
+                }),
+                {
+                  provider: 'Gold API',
+                  price: quote.price,
+                  quoteUpdatedAt: quote.quoteUpdatedAt
+                }
+              ],
+              sourceVerification: {
+                status: 'unavailable',
+                reason: 'Gold API provides a current XAG/USD spot quote but no historical candles; trend signals are paused.'
+              }
+            };
+          } catch (fallbackError) {
+            errors.push(`Gold API: ${fallbackError.message}`);
+          }
+        }
+
         return { symbol, error: errors.join(' ') };
       }
     }));
@@ -458,6 +490,27 @@ async function getYahooFinanceResult(symbol, isCrypto, timeframe) {
     volume: Number(quote.volume?.[index])
   }));
   return createMarketResult(symbol, candles, 'Yahoo Finance', timeframe, result.meta?.currency);
+}
+
+async function getGoldApiSilverQuote() {
+  const response = await fetch('https://api.gold-api.com/price/XAG', {
+    headers: { Accept: 'application/json' }
+  });
+  const data = await readProviderJson(response, 'Gold API');
+  const price = Number(data.price);
+  const quoteUpdatedAt = Date.parse(data.updatedAt);
+  if (data.symbol !== 'XAG' || !Number.isFinite(price) || price <= 0 || !Number.isFinite(quoteUpdatedAt)) {
+    throw new Error('Provider returned an invalid silver spot quote.');
+  }
+  const quoteAgeMs = Date.now() - quoteUpdatedAt;
+  if (quoteAgeMs < -60_000 || quoteAgeMs > 5 * 60_000) {
+    throw new Error('Provider returned a stale or future-dated silver spot quote.');
+  }
+  return {
+    price,
+    currency: data.currency || 'USD',
+    quoteUpdatedAt: new Date(quoteUpdatedAt).toISOString()
+  };
 }
 
 async function readProviderJson(response, provider) {

@@ -132,10 +132,6 @@
             </div>
         </section>
 
-        <section id="calibrationSummary" aria-live="polite" class="bg-cardBg border border-borderCol rounded-2xl px-4 py-3 text-xs text-slate-400">
-            Recent directional backtest metrics are being loaded. Thresholds remain fixed; calibration is advisory.
-        </section>
-
         <!-- Metrics Overview Grid -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
             <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex flex-col gap-3">
@@ -253,7 +249,6 @@
         let tradeAlertAudioContext = null;
         const lastObservedTradeStates = new Map();
         const observedTradeAlertKeys = new Set();
-        const loggedMarketSourceKeys = new Set();
         const autoScanIntervalMs = 60 * 1000;
 
         // Signals and displayed prices use the same 15-minute closed-candle feed.
@@ -305,6 +300,8 @@
                                 logToConsole(`[${asset.symbol}] Market data unavailable: ${error}`, 'error');
                             }
                             asset.marketDataError = error;
+                            asset.spotOnly = false;
+                            asset.quoteUpdatedAt = null;
                             asset.price = null;
                             asset.change = 'Unavailable';
                             asset.rsi15 = null;
@@ -330,8 +327,9 @@
 
                         const hadError = asset.marketDataError;
                         const hadMarketData = Number.isFinite(asset.price);
-                        const previousProvider = asset.dataProvider;
                         asset.marketDataError = null;
+                        asset.spotOnly = result.spotOnly === true;
+                        asset.quoteUpdatedAt = result.quoteUpdatedAt ? Date.parse(result.quoteUpdatedAt) : null;
                         asset.dataProvider = result.provider || 'Twelve Data';
                         asset.dataTimeframe = '15';
                         asset.price = result.price;
@@ -362,15 +360,11 @@
                         asset.calibrationDate = result.calibrationDate || null;
                         asset.dataUpdatedAt = Date.now();
                         applyTimeframeData(asset, selectedTimeframe);
-                        logMarketSources(asset, result);
                         observeTradeSignal(asset);
                         if (hadError) {
                             logToConsole(`[${asset.symbol}] Live market values are available again.`, 'success');
                         } else if (!hadMarketData) {
                             logToConsole(`[${asset.symbol}] Live market values loaded.`, 'success');
-                        }
-                        if (result.provider && previousProvider !== result.provider) {
-                            logToConsole(`[${asset.symbol}] Using ${result.provider} backup market data.`, 'alert');
                         }
                     });
                 } catch (error) {
@@ -380,6 +374,8 @@
                             logToConsole(`[${asset.symbol}] Market data unavailable: ${message}`, 'error');
                         }
                         asset.marketDataError = message;
+                        asset.spotOnly = false;
+                        asset.quoteUpdatedAt = null;
                         asset.price = null;
                         asset.change = 'Unavailable';
                         asset.rsi15 = null;
@@ -424,26 +420,6 @@
             asset.atr = asset.atrByTimeframe?.[barsKey] ?? null;
             asset.marketDiagnostics = asset.marketDiagnosticsByTimeframe?.[barsKey] ?? null;
             asset.backtest = asset.backtestByTimeframe?.[barsKey] ?? null;
-        }
-
-        function logMarketSources(asset, result) {
-            const candleClosedAt = result.candleClosedAt;
-            const providers = (result.marketSources || []).map(source =>
-                source.error ? `${source.provider} unavailable (${source.error})` : source.provider
-            ).join(', ');
-            const verification = result.sourceVerification || {};
-            const logKey = `${asset.symbol}:${candleClosedAt}:${providers}:${verification.status}`;
-            if (loggedMarketSourceKeys.has(logKey)) return;
-            loggedMarketSourceKeys.add(logKey);
-            if (loggedMarketSourceKeys.size > 500) {
-                loggedMarketSourceKeys.delete(loggedMarketSourceKeys.values().next().value);
-            }
-            const detail = verification.reason || (
-                Number.isFinite(verification.discrepancyPercent)
-                    ? `disagreement ${verification.discrepancyPercent.toFixed(3)}%`
-                    : 'no independent comparison feed'
-            );
-            logToConsole(`[${asset.symbol}] Data source(s): ${providers || asset.dataProvider}; verification ${verification.status || 'unavailable'} (${detail}).`, verification.status === 'discrepancy' ? 'alert' : 'info');
         }
 
         let selectedTimeframe = '15';
@@ -688,8 +664,7 @@
             if (signal.raw === 'HOLD') return;
 
             const direction = signal.raw === 'SELL' ? 'SELL / SHORT' : 'BUY';
-            const indicators = alert.market.indicators;
-            const body = `${signal.confidenceLabel}: ${direction} ${asset.symbol} • ${signal.confidence} confidence. ${signal.reason} Price ${alert.market.price} ${alert.market.currency}; RSI 15/30/45m ${indicators.rsi15}/${indicators.rsi30}/${indicators.rsi45}. Entry ${plan.entry}, stop ${plan.invalidation}, 2R target ${plan.target}. ${plan.stopRationale} Position size not calculated; apply account-specific risk limits. ${alert.timestamp}`;
+            const body = `${signal.confidenceLabel}: ${direction} ${asset.symbol} • ${signal.confidence} confidence. ${signal.reason} Price ${alert.market.price} ${alert.market.currency}. Entry ${plan.entry}, stop ${plan.invalidation}, 2R target ${plan.target}. Position size not calculated; apply account-specific risk limits. ${alert.timestamp}`;
 
             logToConsole(JSON.stringify(alert), signal.raw === 'BUY' ? 'success' : 'alert');
             if (!tradeAlertsEnabled) return;
@@ -708,7 +683,6 @@
         }
 
         function createTradeAlert(asset, signal, plan) {
-            const indicators = asset.strategyIndicators || {};
             const closedAt = new Date(asset.candleClosedAt).toISOString();
             return {
                 action: signal.raw,
@@ -719,25 +693,13 @@
                 market: {
                     symbol: asset.symbol,
                     timeframe: `${selectedTimeframe}m`,
-                    provider: asset.dataProvider,
                     price: asset.candleClose,
                     currency: asset.currency,
                     candleClosedAt: closedAt,
-                    regime: asset.marketDiagnostics?.regime ?? null,
-                    diagnostics: asset.marketDiagnostics,
-                    marketSources: asset.marketSources,
-                    sourceVerification: asset.sourceVerification,
-                    backtest: asset.backtest?.[selectedStrategy] ?? null,
-                    calibrationDate: asset.calibrationDate,
                     indicators: {
                         rsi15: formatAlertValue(asset.rsi15),
                         rsi30: formatAlertValue(asset.rsi30),
-                        rsi45: formatAlertValue(asset.rsi45),
-                        ema9: formatAlertValue(indicators.ema9),
-                        ema21: formatAlertValue(indicators.ema21),
-                        macd: formatAlertValue(indicators.macd),
-                        macdSignal: formatAlertValue(indicators.macdSignal),
-                        atr: formatAlertValue(asset.atr)
+                        rsi45: formatAlertValue(asset.rsi45)
                     }
                 },
                 risk: plan ? {
@@ -745,7 +707,6 @@
                     stopLoss: plan.invalidationValue,
                     takeProfit: plan.targetValue,
                     riskRewardRatio: '2:1',
-                    rationale: plan.stopRationale,
                     positionSize: null,
                     positionSizingNote: 'Not calculated; apply account- and instrument-specific risk limits before trading.'
                 } : null
@@ -763,8 +724,11 @@
             if (asset.marketDataError) {
                 return { valid: false, label: `Data unavailable • ${asset.marketDataError}` };
             }
+            if (asset.spotOnly) {
+                return { valid: false, label: 'Live spot quote only • candle history unavailable' };
+            }
             if (/proxy/i.test(asset.dataProvider || '')) {
-                return { valid: false, label: `Proxy data (${asset.dataProvider}) • excluded from trade alerts` };
+                return { valid: false, label: 'Proxy market data • excluded from trade alerts' };
             }
             const closedAt = asset.candleClosedAt;
             if (!Number.isFinite(closedAt) || !Number.isFinite(asset.dataUpdatedAt)) {
@@ -782,11 +746,20 @@
 
             return {
                 valid: true,
-                label: `${asset.dataProvider || 'Market data'} • Closed ${new Date(closedAt).toLocaleString()}`
+                label: `Closed ${new Date(closedAt).toLocaleString()}`
             };
         }
 
         function getDayTradingSignal(asset, tf) {
+            if (asset.spotOnly) {
+                return createStrategySignal(
+                    'HOLD',
+                    'SPOT QUOTE ONLY • SIGNALS PAUSED',
+                    'bg-amber-500/10 text-amber-300 border-amber-500/30',
+                    'A live XAG/USD spot price is available, but no candle-history feed is currently accessible. Trend indicators, stop references, and trade alerts are paused until spot candles are available.',
+                    'LOW'
+                );
+            }
             const dataQuality = getDataQuality(asset, tf);
             if (!dataQuality.valid) {
                 return createStrategySignal('UNAVAILABLE', dataQuality.label.toUpperCase(), 'bg-amber-500/10 text-amber-300 border-amber-500/30', dataQuality.label, 'LOW');
@@ -803,7 +776,7 @@
             }
             const filterReason = getMarketFilterReason(asset, diagnostics);
             if (filterReason) {
-                return createStrategySignal('HOLD', `CAUTIONARY HOLD (${diagnostics.regime})`, 'bg-amber-500/10 text-amber-300 border-amber-500/30', filterReason, 'LOW');
+                return createStrategySignal('HOLD', 'CAUTIONARY HOLD', 'bg-amber-500/10 text-amber-300 border-amber-500/30', filterReason, 'LOW');
             }
 
             if (selectedStrategy === 'trendFollowing') {
@@ -812,15 +785,14 @@
 
             const active = getRawStrategySignal(getTimeframeAsset(asset, tf), selectedStrategy, tf);
             if (!['BUY', 'SELL'].includes(active.raw)) {
-                active.reason = `${active.reason} Regime: ${diagnostics.regime}.`;
-                active.text = `CAUTIONARY ${active.raw} (${diagnostics.regime})`;
+                active.text = `CAUTIONARY ${active.raw}`;
                 active.confidence = 'LOW';
                 return active;
             }
 
             const sourceVerification = asset.sourceVerification || {};
             if (sourceVerification.status === 'discrepancy') {
-                return createStrategySignal('HOLD', `CAUTIONARY HOLD (${diagnostics.regime})`, 'bg-amber-500/10 text-amber-300 border-amber-500/30', `Conflicting data feeds: ${sourceVerification.reason}`, 'LOW');
+                return createStrategySignal('HOLD', 'CAUTIONARY HOLD', 'bg-amber-500/10 text-amber-300 border-amber-500/30', 'Market feeds disagree; the setup is paused until data is consistent.', 'LOW');
             }
 
             const weights = diagnostics.regime === 'Trending'
@@ -840,13 +812,12 @@
             const alignedTimeframes = timeframeVotes.filter(vote => vote === active.raw).length;
             const opposingTimeframes = timeframeVotes.filter(vote => ['BUY', 'SELL'].includes(vote) && vote !== active.raw).length;
             const compositeScore = strategyScore + (0.25 * (alignedTimeframes - opposingTimeframes));
-            const scoreLabel = compositeScore.toFixed(2);
             if (compositeScore < 0.45) {
                 return createStrategySignal(
                     'HOLD',
-                    `CAUTIONARY HOLD (${diagnostics.regime})`,
+                    'CAUTIONARY HOLD',
                     'bg-amber-500/10 text-amber-300 border-amber-500/30',
-                    `${active.reason} Composite score ${scoreLabel} is below the 0.45 entry threshold or conflicts with the setup; ${alignedTimeframes}/2 other timeframes align, ${opposingTimeframes}/2 oppose. Strategy votes: RSI ${strategyVotes.rsi}, EMA/MACD ${strategyVotes.emaMacd}, Bollinger/RSI ${strategyVotes.bollingerRsi}.`,
+                    `${active.reason} Indicator signals conflict or lack sufficient confluence, so the setup is paused.`,
                     'LOW'
                 );
             }
@@ -860,25 +831,25 @@
             const label = confidence === 'HIGH' ? 'HIGH-PROBABILITY' : 'CAUTIONARY';
             return createStrategySignal(
                 active.raw,
-                `${label} ${active.raw} (${diagnostics.regime}, score ${scoreLabel})`,
+                `${label} ${active.raw}`,
                 active.style,
-                `${active.reason} Regime: ${diagnostics.regime}; adaptive weights RSI ${weights.rsi}, EMA/MACD ${weights.emaMacd}, Bollinger/RSI ${weights.bollingerRsi}. Composite score ${scoreLabel} (threshold 0.45); ${alignedTimeframes}/2 other timeframes align.`,
+                `${active.reason} Indicator confluence and timeframe alignment support this setup.`,
                 confidence
             );
         }
 
         function getMarketFilterReason(asset, diagnostics) {
             if (asset.sourceVerification?.status === 'discrepancy') {
-                return `Conflicting data feeds: ${asset.sourceVerification.reason}`;
+                return 'Market feeds disagree; the setup is paused until data is consistent.';
             }
             if (diagnostics.lowVolatility) {
-                return `Quiet market: ATR is ${diagnostics.atrPercent.toFixed(3)}% of price, below the 0.02% minimum.`;
+                return 'Quiet market conditions; waiting for sufficient movement.';
             }
             if (diagnostics.erraticSpike) {
-                return `Erratic volatility spike: the latest candle range is ${diagnostics.spikeRatio.toFixed(2)}× the recent median.`;
+                return 'Erratic market movement; waiting for conditions to stabilize.';
             }
             if (diagnostics.lowVolume) {
-                return `Unusually low volume: the latest candle is ${diagnostics.volumeRatio.toFixed(2)}× the recent average.`;
+                return 'Unusually low trading activity; the setup is paused.';
             }
             return null;
         }
@@ -942,13 +913,11 @@
                     'HOLD',
                     `WAITING FOR ${regimeDirection === 'BUY' ? 'BUY' : 'SELL'} CONFIRMATION`,
                     'bg-slate-800 text-slate-300 border-slate-700',
-                    `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} 45m EMA/MACD/RSI regime established, but the ${entryTimeframe}m entry and at least one other timeframe among 15m, 30m, and 45m must confirm before a ${regimeDirection === 'BUY' ? 'buy' : 'sell'} entry.`,
+                    `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} direction is established, but entry confirmation is not sufficient yet.`,
                     'LOW'
                 );
             }
 
-            const indicators = entryAsset.strategyIndicators;
-            const rsi = entryAsset.strategyRsi;
             const action = regimeDirection;
             const sourceVerified = asset.sourceVerification?.status === 'verified';
             const diagnostics = asset.marketDiagnostics;
@@ -965,7 +934,7 @@
                 action,
                 `${confidence === 'HIGH' ? 'HIGH-PROBABILITY' : 'CAUTIONARY'} ${action} THE ${direction.toUpperCase()} TREND (${entryTimeframe}m entry / 45m regime)`,
                 style,
-                `${direction[0].toUpperCase()}${direction.slice(1)} regime: 45m EMA9 ${regimeIndicators.ema9.toFixed(4)} ${action === 'BUY' ? '>' : '<'} EMA21 ${regimeIndicators.ema21.toFixed(4)} and MACD confirms. ${entryTimeframe}m EMA9 ${indicators.ema9.toFixed(4)} ${action === 'BUY' ? '>' : '<'} EMA21 ${indicators.ema21.toFixed(4)}, MACD ${indicators.macd.toFixed(4)} ${action === 'BUY' ? '>' : '<'} signal ${indicators.macdSignal.toFixed(4)}, RSI ${rsi.toFixed(1)} ${action === 'BUY' ? '>50' : '<50'}. ${alignedTimeframes}/3 timeframes align; feed check ${asset.sourceVerification?.status || 'unavailable'}.`,
+                `${direction[0].toUpperCase()}${direction.slice(1)} trend confirmed across the 45m regime and ${entryTimeframe}m entry; the required multi-timeframe alignment is met.`,
                 confidence
             );
         }
@@ -1195,11 +1164,11 @@
                             <span class="font-bold text-base ${asset.color}">${escapeHtml(asset.symbol)}</span>
                             <p class="text-xs text-slate-400">${escapeHtml(asset.name)}</p>
                         </div>
-                        <span title="${escapeHtml(asset.marketDataError || (asset.dataProvider ? `${asset.dataProvider} • ${asset.dataTimeframe || selectedTimeframe}-minute change` : (!publicQuoteSymbols.has(asset.symbol) ? `${selectedTimeframe}-minute change` : 'Market change')))}" class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : asset.marketDataError ? 'text-rose-400 bg-rose-500/10' : changeClass}">${marketBreak.isOnBreak ? 'Market Break' : escapeHtml(asset.change)}</span>
+                        <span title="${escapeHtml(asset.marketDataError || (asset.dataProvider ? `${asset.dataTimeframe || selectedTimeframe}-minute change` : (!publicQuoteSymbols.has(asset.symbol) ? `${selectedTimeframe}-minute change` : 'Market change')))}" class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : asset.marketDataError ? 'text-rose-400 bg-rose-500/10' : changeClass}">${marketBreak.isOnBreak ? 'Market Break' : escapeHtml(asset.change)}</span>
                     </div>
                     <div class="space-y-1">
                         <div class="text-2xl font-bold tracking-tight">${Number.isFinite(asset.price) ? `${asset.currency === 'USD' || !asset.currency ? '$' : ''}${asset.price.toLocaleString(undefined, { maximumSignificantDigits: 8 })}${asset.currency && asset.currency !== 'USD' ? ` ${escapeHtml(asset.currency)}` : ''}` : '—'}</div>
-                        <p class="text-[10px] text-slate-500">Last closed ${asset.dataTimeframe || '15'}m candle</p>
+                        <p class="text-[10px] text-slate-500">${asset.spotOnly ? `Live spot quote${Number.isFinite(asset.quoteUpdatedAt) ? ` • ${new Date(asset.quoteUpdatedAt).toLocaleTimeString()}` : ''}` : `Last closed ${asset.dataTimeframe || '15'}m candle`}</p>
                         <p class="text-[10px] leading-relaxed ${dataQuality.valid ? 'text-slate-500' : 'text-amber-300'}">${escapeHtml(dataQuality.label)}${Number.isFinite(asset.candleClose) ? ` • Candle close ${asset.candleClose.toLocaleString(undefined, { maximumSignificantDigits: 8 })}` : ''}</p>
                         <div class="space-y-1.5 pt-2 border-t border-borderCol/60">
                             <div class="flex items-center justify-between text-xs">
@@ -1233,16 +1202,9 @@
                                     <div><dt class="text-slate-500">Target (2R)</dt><dd class="font-mono text-slate-200">${referencePlan.target}</dd></div>
                                     <div><dt class="text-slate-500">Risk distance</dt><dd class="font-mono text-slate-200">${referencePlan.riskDistance}</dd></div>
                                 </dl>
-                                <p class="text-[10px] leading-relaxed text-slate-400">${escapeHtml(referencePlan.stopRationale)}</p>
                             ` : signalObj.raw === 'BUY' || signalObj.raw === 'SELL'
-                                ? '<p class="text-[10px] leading-relaxed text-amber-300">ATR-based stop and target are unavailable, so this setup has no complete trade plan.</p>'
+                                ? '<p class="text-[10px] leading-relaxed text-amber-300">Reference stop and target levels are unavailable, so this setup has no complete trade plan.</p>'
                                 : '<p class="text-[10px] leading-relaxed text-slate-500">Wait for a valid, fresh setup before considering a trade.</p>'}
-                            <div class="border-t border-borderCol pt-2 space-y-1 text-[10px] text-slate-400">
-                                <p><span class="text-slate-500">Regime:</span> ${escapeHtml(asset.marketDiagnostics?.regime || 'Unavailable')} • <span class="text-slate-500">ATR:</span> ${Number.isFinite(asset.marketDiagnostics?.atrPercent) ? `${asset.marketDiagnostics.atrPercent.toFixed(3)}%` : 'Unavailable'}</p>
-                                <p><span class="text-slate-500">Volume:</span> ${asset.marketDiagnostics?.volumeAvailable ? `${asset.marketDiagnostics.volumeRatio.toFixed(2)}× average` : 'Unavailable from feed (not filtered)'} • <span class="text-slate-500">Feed check:</span> ${escapeHtml(asset.sourceVerification?.status || 'unavailable')}</p>
-                                <p><span class="text-slate-500">Sources:</span> ${escapeHtml((asset.marketSources || []).map(source => source.provider).join(', ') || asset.dataProvider || 'Unavailable')}</p>
-                                <p><span class="text-slate-500">Recent ${escapeHtml(strategyNames[selectedStrategy])} backtest:</span> ${asset.backtest?.[selectedStrategy]?.closedTrades ? `${asset.backtest[selectedStrategy].closedTrades} trades • ${asset.backtest[selectedStrategy].winRatePercent.toFixed(1)}% wins • ${asset.backtest[selectedStrategy].netR.toFixed(2)}R net` : 'No closed samples'} • Calibrated ${asset.calibrationDate ? escapeHtml(new Date(asset.calibrationDate).toLocaleDateString()) : 'Unavailable'}</p>
-                            </div>
                         </section>
                     </div>
                 `;
@@ -1250,28 +1212,6 @@
             });
 
             document.getElementById('trackedAssetCount').textContent = `${assets.length} / 5 Assets`;
-            renderCalibrationSummary();
-        }
-
-        function renderCalibrationSummary() {
-            const summary = document.getElementById('calibrationSummary');
-            const asset = assets.find(candidate => candidate.backtest && candidate.calibrationDate);
-            if (!asset) {
-                summary.textContent = 'Backtest calibration is unavailable until historical candles load. Thresholds remain fixed; no automatic tuning is applied.';
-                return;
-            }
-
-            const date = new Date(asset.calibrationDate).toLocaleString();
-            const strategies = [
-                ['RSI', asset.backtest.rsi],
-                ['EMA/MACD', asset.backtest.emaMacd],
-                ['Bollinger/RSI', asset.backtest.bollingerRsi],
-                ['Trend following', asset.backtest.trendFollowing]
-            ].map(([name, stats]) => {
-                if (!stats || !stats.closedTrades) return `${name}: no closed samples`;
-                return `${name}: ${stats.closedTrades} trades, ${stats.winRatePercent.toFixed(1)}% wins, ${stats.netR.toFixed(2)}R net`;
-            }).join(' • ');
-            summary.textContent = `Recent historical backtest • ${asset.symbol} • Last calibration candle: ${date} • ${strategies}. Fixed 1.5 ATR stop / 2R target; historical results exclude fees, spread, and slippage and do not change live thresholds.`;
         }
 
         function escapeHtml(value) {
@@ -1347,6 +1287,8 @@
                 color: 'text-sky-400',
                 isCrypto: formData.get('type') === 'crypto',
                 marketDataError: null,
+                spotOnly: false,
+                quoteUpdatedAt: null,
                 dataProvider: null
             };
             assetSlots[addingAssetSlot] = asset;
@@ -1401,10 +1343,10 @@
                             logToConsole(`[${asset.symbol}] Scan skipped: ${getDataQuality(asset, scanTimeframe).label}.`, 'alert');
                         } else if (sig.raw === 'BUY') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Trade guidance: BUY (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Trade plan incomplete (ATR levels unavailable); do not act on this setup.'}`, 'success');
+                            logToConsole(`[${asset.symbol}] Trade guidance: BUY (${scanTimeframe}m, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Reference levels unavailable; do not act on this setup.'}`, 'success');
                         } else if (sig.raw === 'SELL') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Trade guidance: SELL / SHORT (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Trade plan incomplete (ATR levels unavailable); do not act on this setup.'}`, 'alert');
+                            logToConsole(`[${asset.symbol}] Trade guidance: SELL / SHORT (${scanTimeframe}m, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Reference levels unavailable; do not act on this setup.'}`, 'alert');
                         } else {
                             noSetupSymbols.push(asset.symbol);
                         }
