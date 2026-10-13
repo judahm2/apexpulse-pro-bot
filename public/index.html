@@ -144,6 +144,7 @@
                 <select id="strategySelect" onchange="window.changeStrategy(this.value)" class="w-full bg-slate-900 border border-borderCol text-xs text-slate-200 rounded px-2 py-2 focus:outline-none focus:border-blue-500 cursor-pointer">
                     <option value="trendFollowing">Trend Following (Buy Bull / Sell Bear)</option>
                     <option value="trendRsi">Trend + Dual-TF RSI Confluence</option>
+                    <option value="conservativeDayTrade">Conservative Day-Trade Pullback</option>
                     <option value="rsi">Dual-TF RSI Confluence</option>
                     <option value="emaMacd">EMA Crossover + MACD</option>
                     <option value="bollingerRsi">Bollinger Bands + RSI</option>
@@ -206,7 +207,7 @@
         </div>
 
         <p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3">
-            Alerts use third-party closed-candle data, not Exness executable bid/ask quotes; prices may differ by provider, spread, and execution. Confirm levels and risk yourself. This dashboard does not calculate position size or place orders.
+            Alerts use third-party closed-candle data; prices may differ from executable market prices because of provider differences, spreads, and execution. Confirm levels and risk yourself. This dashboard does not calculate position size or place orders.
         </p>
 
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
@@ -233,16 +234,15 @@
     </footer>
 
     <script>
-        // Multi-asset dataset including precious metals, forex pairs, and crypto
+        // Default markets include gold, forex pairs, and crypto.
         const assets = [
             { symbol: 'XAU/USD', name: 'Gold Spot', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-amber-400', isCrypto: false },
             { symbol: 'BTC/USD', name: 'Bitcoin', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-orange-400', isCrypto: true },
-            { symbol: 'XAG/USD', name: 'Silver Spot', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-slate-300', isCrypto: false },
             { symbol: 'EUR/USD', name: 'Euro / US Dollar', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-indigo-400', isCrypto: false },
             { symbol: 'AUD/USD', name: 'Australian Dollar', price: null, change: 'Loading...', rsi15: null, rsi30: null, rsi45: null, trend: 'UNKNOWN', color: 'text-blue-400', isCrypto: false }
         ];
-        const assetSlots = [...assets, null, null, null, null].slice(0, 5);
-        const publicQuoteSymbols = new Set(['XAU/USD', 'BTC/USD', 'XAG/USD', 'EUR/USD', 'AUD/USD']);
+        const assetSlots = [...assets, null, null].slice(0, 5);
+        const publicQuoteSymbols = new Set(['XAU/USD', 'BTC/USD', 'EUR/USD', 'AUD/USD']);
         let marketDataRequestPromise = null;
         let marketDataRequestKey = null;
         let autoScanEnabled = true;
@@ -470,6 +470,7 @@
         const strategyNames = {
             trendFollowing: 'Trend Following (Buy Bull / Sell Bear)',
             trendRsi: 'Trend + Dual-TF RSI Confluence',
+            conservativeDayTrade: 'Conservative Day-Trade Pullback',
             rsi: 'Dual-TF RSI Confluence',
             emaMacd: 'EMA Crossover + MACD',
             bollingerRsi: 'Bollinger Bands + RSI'
@@ -477,6 +478,7 @@
         const strategyDescriptions = {
             trendFollowing: ['Trend Alignment', '45m regime + EMA/MACD + RSI'],
             trendRsi: ['Trend Pullback Confluence', 'Trend alignment + two-timeframe RSI confirmation'],
+            conservativeDayTrade: ['Conservative Day-Trade Filter', 'Verified feeds + 30m/45m trend + 15m RSI reset'],
             rsi: ['Day-Trader Filter', 'Strict Confluence'],
             emaMacd: ['Trend Following', 'EMA 9/21 + MACD'],
             bollingerRsi: ['Mean Reversion', 'Bands + RSI 14']
@@ -770,12 +772,35 @@
             if (selectedStrategy === 'trendRsi') {
                 return getTrendRsiSignal(asset, tf);
             }
+            if (selectedStrategy === 'conservativeDayTrade') {
+                return getConservativeDayTradeSignal(asset, tf);
+            }
 
             const active = getRawStrategySignal(getTimeframeAsset(asset, tf), selectedStrategy, tf);
             if (!['BUY', 'SELL'].includes(active.raw)) {
                 active.text = `CAUTIONARY ${active.raw}`;
                 active.confidence = 'LOW';
                 return active;
+            }
+
+            const regimeDirection = getTrendDirection(
+                asset.strategyIndicatorsByTimeframe?.['45'],
+                asset.rsiByTimeframe?.['45']
+            );
+            if (regimeDirection !== active.raw) {
+                const direction = active.raw === 'BUY' ? 'bullish' : 'bearish';
+                const regime = regimeDirection === 'BUY'
+                    ? 'bullish'
+                    : regimeDirection === 'SELL'
+                        ? 'bearish'
+                        : 'unconfirmed';
+                return createStrategySignal(
+                    'HOLD',
+                    `WAITING FOR ${active.raw} TREND ALIGNMENT`,
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    `${active.reason} The ${active.raw} setup is not aligned with the 45m regime (${regime}); only BUYs in confirmed bullish trends and SELLs in confirmed bearish trends are allowed.`,
+                    'LOW'
+                );
             }
 
             const sourceVerification = asset.sourceVerification || {};
@@ -976,6 +1001,96 @@
                 style,
                 `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} 45m trend and ${entryTimeframe}m EMA/MACD align; 15m/30m RSI confirm a pullback in that trend.`,
                 'MEDIUM'
+            );
+        }
+
+        function getConservativeDayTradeSignal(asset, tf) {
+            if (asset.sourceVerification?.status !== 'verified') {
+                return createStrategySignal(
+                    'HOLD',
+                    'WAITING FOR VERIFIED FEEDS',
+                    'bg-amber-500/10 text-amber-300 border-amber-500/30',
+                    'This conservative strategy requires both market feeds to confirm the same completed candle within the allowed price difference.',
+                    'LOW'
+                );
+            }
+
+            const diagnostics = asset.marketDiagnostics;
+            if (!diagnostics?.volumeAvailable) {
+                return createStrategySignal(
+                    'HOLD',
+                    'WAITING FOR VOLUME DATA',
+                    'bg-amber-500/10 text-amber-300 border-amber-500/30',
+                    'Trading volume is unavailable, so this conservative strategy will not open a setup.',
+                    'LOW'
+                );
+            }
+
+            const regimeDirection = getTrendDirection(
+                asset.strategyIndicatorsByTimeframe?.['45'],
+                asset.rsiByTimeframe?.['45']
+            );
+            const confirmationDirection = getTrendDirection(
+                asset.strategyIndicatorsByTimeframe?.['30'],
+                asset.rsiByTimeframe?.['30']
+            );
+            if (!['BUY', 'SELL'].includes(regimeDirection) || confirmationDirection !== regimeDirection) {
+                return createStrategySignal(
+                    'HOLD',
+                    'WAITING FOR 30m/45m TREND ALIGNMENT',
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    'The 30m and 45m EMA/MACD/RSI trends must both confirm the same bullish or bearish direction.',
+                    'LOW'
+                );
+            }
+
+            const entryTimeframe = tf === '45' ? '15' : String(tf);
+            const entryIndicators = asset.strategyIndicatorsByTimeframe?.[entryTimeframe];
+            if (getTrendEntryDirection(entryIndicators) !== regimeDirection) {
+                return createStrategySignal(
+                    'HOLD',
+                    `WAITING FOR ${entryTimeframe}m ENTRY CONFIRMATION`,
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    `The 30m/45m ${regimeDirection === 'BUY' ? 'bullish' : 'bearish'} trend is aligned, but ${entryTimeframe}m EMA9/EMA21 and MACD do not yet confirm the entry.`,
+                    'LOW'
+                );
+            }
+
+            const pullbackRsi = asset.rsiByTimeframe?.['15'];
+            if (!Number.isFinite(pullbackRsi)) {
+                return createStrategySignal(
+                    'HOLD',
+                    '15m RSI DATA UNAVAILABLE',
+                    'bg-amber-500/10 text-amber-300 border-amber-500/30',
+                    'A valid 15m RSI reading is required to confirm the trend pullback.',
+                    'LOW'
+                );
+            }
+            const pullbackConfirmed = regimeDirection === 'BUY'
+                ? pullbackRsi >= 40 && pullbackRsi < 50
+                : pullbackRsi > 50 && pullbackRsi <= 60;
+            if (!pullbackConfirmed) {
+                const pullbackRange = regimeDirection === 'BUY' ? '40–<50' : '>50–60';
+                return createStrategySignal(
+                    'HOLD',
+                    'WAITING FOR 15m RSI RESET',
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    `The ${regimeDirection === 'BUY' ? 'bullish' : 'bearish'} trend and entry are aligned, but 15m RSI ${pullbackRsi.toFixed(1)} is outside the pullback-reset range (${pullbackRange}).`,
+                    'LOW'
+                );
+            }
+
+            const entryStyle = regimeDirection === 'BUY'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+            const regimeName = regimeDirection === 'BUY' ? 'bullish' : 'bearish';
+            const entryIndicatorValues = entryIndicators;
+            return createStrategySignal(
+                regimeDirection,
+                `HIGH-CONFLUENCE ${regimeDirection} • CONSERVATIVE PULLBACK`,
+                entryStyle,
+                `Verified feeds and available volume; 30m/45m ${regimeName} trends align, ${entryTimeframe}m EMA9 ${entryIndicatorValues.ema9.toFixed(4)} / EMA21 ${entryIndicatorValues.ema21.toFixed(4)} and MACD ${entryIndicatorValues.macd.toFixed(4)} / signal ${entryIndicatorValues.macdSignal.toFixed(4)} confirm, and 15m RSI ${pullbackRsi.toFixed(1)} is in the pullback-reset range. Reference risk remains an ATR-based stop and 2R target; no position size is calculated.`,
+                'HIGH'
             );
         }
 

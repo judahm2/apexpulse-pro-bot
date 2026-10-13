@@ -6,7 +6,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized request' });
   }
 
-  const symbols = ['XAU/USD', 'BTC/USD', 'XAG/USD', 'EUR/USD', 'AUD/USD'];
+  const symbols = ['XAU/USD', 'BTC/USD', 'EUR/USD', 'AUD/USD'];
 
   try {
     const marketResponse = createInternalResponse();

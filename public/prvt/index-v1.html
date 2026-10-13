@@ -144,11 +144,10 @@
     </footer>
 
     <script>
-        // Multi-asset dataset including precious metals, forex pairs, and crypto
+        // Default markets include gold, forex pairs, and crypto.
         const assets = [
             { symbol: 'XAU/USD', name: 'Gold Spot', price: 4136.50, change: '+0.42%', rsi15: 27.5, rsi30: 31.2, rsi45: 35.4, trend: 'BULLISH', color: 'text-amber-400', isCrypto: false },
             { symbol: 'BTC/USD', name: 'Bitcoin', price: 88450.20, change: '-1.15%', rsi15: 28.1, rsi30: 26.4, rsi45: 24.2, trend: 'BEARISH', color: 'text-orange-400', isCrypto: true },
-            { symbol: 'XAG/USD', name: 'Silver Spot', price: 31.85, change: '+0.89%', rsi15: 72.4, rsi30: 69.8, rsi45: 65.1, trend: 'BULLISH', color: 'text-slate-300', isCrypto: false },
             { symbol: 'EUR/USD', name: 'Euro / US Dollar', price: 1.0824, change: '+0.15%', rsi15: 24.9, rsi30: 29.1, rsi45: 33.5, trend: 'BULLISH', color: 'text-indigo-400', isCrypto: false },
             { symbol: 'AUD/USD', name: 'Australian Dollar', price: 0.6542, change: '-0.12%', rsi15: 74.8, rsi30: 71.2, rsi45: 68.9, trend: 'BEARISH', color: 'text-blue-400', isCrypto: false }
         ];
@@ -158,7 +157,6 @@
             const requests = [
                 fetch('https://api.gold-api.com/price/XAU').then(response => response.ok ? response.json() : Promise.reject()),
                 fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd').then(response => response.ok ? response.json() : Promise.reject()),
-                fetch('https://api.gold-api.com/price/XAG').then(response => response.ok ? response.json() : Promise.reject()),
                 fetch('https://api.frankfurter.app/latest?from=EUR&to=USD').then(response => response.ok ? response.json() : Promise.reject()),
                 fetch('https://api.frankfurter.app/latest?from=AUD&to=USD').then(response => response.ok ? response.json() : Promise.reject())
             ];
@@ -167,9 +165,8 @@
 
             if (prices[0]?.price > 0) assets[0].price = prices[0].price;
             if (prices[1]?.bitcoin?.usd > 0) assets[1].price = prices[1].bitcoin.usd;
-            if (prices[2]?.price > 0) assets[2].price = prices[2].price;
+            if (prices[2]?.rates?.USD > 0) assets[2].price = prices[2].rates.USD;
             if (prices[3]?.rates?.USD > 0) assets[3].price = prices[3].rates.USD;
-            if (prices[4]?.rates?.USD > 0) assets[4].price = prices[4].rates.USD;
 
             renderAssets();
         }
