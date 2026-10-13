@@ -91,7 +91,7 @@
                 </button>
                 <div class="hidden sm:flex items-center space-x-2 bg-slate-900 border border-borderCol px-3 py-1.5 rounded-lg text-xs text-slate-300">
                     <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span id="selectedStrategyLabel">Strategy: Dual-TF RSI Confluence</span>
+                    <span id="selectedStrategyLabel">Strategy: Trend Following (Buy Bull / Sell Bear)</span>
                 </div>
                 <button onclick="window.triggerManualScan()" id="scanBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-lg shadow-blue-600/20 flex items-center space-x-2 cursor-pointer">
                     <i class="fa-solid fa-bolt text-xs"></i>
@@ -143,6 +143,7 @@
                 </div>
                 <select id="strategySelect" onchange="window.changeStrategy(this.value)" class="w-full bg-slate-900 border border-borderCol text-xs text-slate-200 rounded px-2 py-2 focus:outline-none focus:border-blue-500 cursor-pointer">
                     <option value="trendFollowing">Trend Following (Buy Bull / Sell Bear)</option>
+                    <option value="trendRsi">Trend + Dual-TF RSI Confluence</option>
                     <option value="rsi">Dual-TF RSI Confluence</option>
                     <option value="emaMacd">EMA Crossover + MACD</option>
                     <option value="bollingerRsi">Bollinger Bands + RSI</option>
@@ -162,8 +163,8 @@
                     <i class="fa-solid fa-crosshairs text-xl"></i>
                 </div>
                 <div>
-                    <p id="strategyDescriptionLabel" class="text-xs text-slate-400 font-medium">Day-Trader Filter</p>
-                    <p id="strategyDescription" class="text-lg font-bold text-blue-400">Strict Confluence</p>
+                    <p id="strategyDescriptionLabel" class="text-xs text-slate-400 font-medium">Trend Alignment</p>
+                    <p id="strategyDescription" class="text-lg font-bold text-blue-400">45m regime + EMA/MACD + RSI</p>
                 </div>
             </div>
             <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
@@ -300,8 +301,6 @@
                                 logToConsole(`[${asset.symbol}] Market data unavailable: ${error}`, 'error');
                             }
                             asset.marketDataError = error;
-                            asset.spotOnly = false;
-                            asset.quoteUpdatedAt = null;
                             asset.price = null;
                             asset.change = 'Unavailable';
                             asset.rsi15 = null;
@@ -328,8 +327,6 @@
                         const hadError = asset.marketDataError;
                         const hadMarketData = Number.isFinite(asset.price);
                         asset.marketDataError = null;
-                        asset.spotOnly = result.spotOnly === true;
-                        asset.quoteUpdatedAt = result.quoteUpdatedAt ? Date.parse(result.quoteUpdatedAt) : null;
                         asset.dataProvider = result.provider || 'Twelve Data';
                         asset.dataTimeframe = '15';
                         asset.price = result.price;
@@ -374,8 +371,6 @@
                             logToConsole(`[${asset.symbol}] Market data unavailable: ${message}`, 'error');
                         }
                         asset.marketDataError = message;
-                        asset.spotOnly = false;
-                        asset.quoteUpdatedAt = null;
                         asset.price = null;
                         asset.change = 'Unavailable';
                         asset.rsi15 = null;
@@ -465,7 +460,7 @@
             assets.forEach(asset => {
                 applyTimeframeData(asset, tf);
             });
-            document.getElementById('activeTimeframeBadge').textContent = selectedStrategy === 'rsi'
+            document.getElementById('activeTimeframeBadge').textContent = ['rsi', 'trendRsi'].includes(selectedStrategy)
                 ? `Active View: ${tf}m RSI + Confluence`
                 : `Active View: ${tf}m ${strategyNames[selectedStrategy]}`;
             logToConsole(`Switching scanner timeframe to ${tf} minutes with ${strategyNames[selectedStrategy]}.`, 'info');
@@ -474,12 +469,14 @@
 
         const strategyNames = {
             trendFollowing: 'Trend Following (Buy Bull / Sell Bear)',
+            trendRsi: 'Trend + Dual-TF RSI Confluence',
             rsi: 'Dual-TF RSI Confluence',
             emaMacd: 'EMA Crossover + MACD',
             bollingerRsi: 'Bollinger Bands + RSI'
         };
         const strategyDescriptions = {
             trendFollowing: ['Trend Alignment', '45m regime + EMA/MACD + RSI'],
+            trendRsi: ['Trend Pullback Confluence', 'Trend alignment + two-timeframe RSI confirmation'],
             rsi: ['Day-Trader Filter', 'Strict Confluence'],
             emaMacd: ['Trend Following', 'EMA 9/21 + MACD'],
             bollingerRsi: ['Mean Reversion', 'Bands + RSI 14']
@@ -496,7 +493,7 @@
             document.getElementById('selectedStrategyLabel').textContent = `Strategy: ${strategyNames[strategy]}`;
             document.getElementById('strategyDescriptionLabel').textContent = strategyDescriptions[strategy][0];
             document.getElementById('strategyDescription').textContent = strategyDescriptions[strategy][1];
-            document.getElementById('activeTimeframeBadge').textContent = strategy === 'rsi'
+            document.getElementById('activeTimeframeBadge').textContent = ['rsi', 'trendRsi'].includes(strategy)
                 ? `Active View: ${selectedTimeframe}m RSI + Confluence`
                 : `Active View: ${selectedTimeframe}m ${strategyNames[strategy]}`;
             logToConsole(`Switching strategy to ${strategyNames[strategy]} on ${selectedTimeframe}-minute candles.`, 'info');
@@ -724,9 +721,6 @@
             if (asset.marketDataError) {
                 return { valid: false, label: `Data unavailable • ${asset.marketDataError}` };
             }
-            if (asset.spotOnly) {
-                return { valid: false, label: 'Live spot quote only • candle history unavailable' };
-            }
             if (/proxy/i.test(asset.dataProvider || '')) {
                 return { valid: false, label: 'Proxy market data • excluded from trade alerts' };
             }
@@ -751,15 +745,6 @@
         }
 
         function getDayTradingSignal(asset, tf) {
-            if (asset.spotOnly) {
-                return createStrategySignal(
-                    'HOLD',
-                    'SPOT QUOTE ONLY • SIGNALS PAUSED',
-                    'bg-amber-500/10 text-amber-300 border-amber-500/30',
-                    'A live XAG/USD spot price is available, but no candle-history feed is currently accessible. Trend indicators, stop references, and trade alerts are paused until spot candles are available.',
-                    'LOW'
-                );
-            }
             const dataQuality = getDataQuality(asset, tf);
             if (!dataQuality.valid) {
                 return createStrategySignal('UNAVAILABLE', dataQuality.label.toUpperCase(), 'bg-amber-500/10 text-amber-300 border-amber-500/30', dataQuality.label, 'LOW');
@@ -781,6 +766,9 @@
 
             if (selectedStrategy === 'trendFollowing') {
                 return getTrendFollowingSignal(asset, tf);
+            }
+            if (selectedStrategy === 'trendRsi') {
+                return getTrendRsiSignal(asset, tf);
             }
 
             const active = getRawStrategySignal(getTimeframeAsset(asset, tf), selectedStrategy, tf);
@@ -867,6 +855,7 @@
 
         function getRawStrategySignal(asset, strategy, timeframe) {
             if (strategy === 'trendFollowing') return getTrendFollowingSignal(asset, timeframe);
+            if (strategy === 'trendRsi') return getTrendRsiSignal(asset, timeframe);
             if (strategy === 'emaMacd') return getEmaMacdSignal(asset, timeframe);
             if (strategy === 'bollingerRsi') return getBollingerRsiSignal(asset, timeframe);
             return getRsiSignal(asset, timeframe);
@@ -937,6 +926,67 @@
                 `${direction[0].toUpperCase()}${direction.slice(1)} trend confirmed across the 45m regime and ${entryTimeframe}m entry; the required multi-timeframe alignment is met.`,
                 confidence
             );
+        }
+
+        function getTrendRsiSignal(asset, tf) {
+            const regimeDirection = getTrendDirection(
+                asset.strategyIndicatorsByTimeframe?.['45'],
+                asset.rsiByTimeframe?.['45']
+            );
+            if (!['BUY', 'SELL'].includes(regimeDirection)) {
+                return createStrategySignal(
+                    'HOLD',
+                    'WAITING FOR DIRECTIONAL TREND',
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    'The 45m trend is not confirmed; wait for direction before checking entry and RSI confluence.',
+                    'LOW'
+                );
+            }
+
+            const entryTimeframe = tf === '45' ? '15' : String(tf);
+            const entryIndicators = asset.strategyIndicatorsByTimeframe?.[entryTimeframe];
+            const entryDirection = getTrendEntryDirection(entryIndicators);
+            if (entryDirection !== regimeDirection) {
+                return createStrategySignal(
+                    'HOLD',
+                    `WAITING FOR ${regimeDirection} TREND ENTRY`,
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    `The 45m ${regimeDirection === 'BUY' ? 'bullish' : 'bearish'} trend is confirmed, but ${entryTimeframe}m EMA/MACD do not yet agree.`,
+                    'LOW'
+                );
+            }
+
+            const rsiSignal = getRsiSignal(getTimeframeAsset(asset, '15'), '15');
+            if (rsiSignal.raw !== regimeDirection) {
+                return createStrategySignal(
+                    'HOLD',
+                    `WAITING FOR ${regimeDirection} RSI PULLBACK`,
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    `The trend entry is aligned, but 15m and 30m RSI have not confirmed a ${regimeDirection === 'BUY' ? 'bullish pullback (RSI ≤30 and ≤38)' : 'bearish pullback (RSI ≥70 and ≥62)'}.`,
+                    'LOW'
+                );
+            }
+
+            const style = regimeDirection === 'BUY'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+            return createStrategySignal(
+                regimeDirection,
+                `CAUTIONARY ${regimeDirection} • TREND + RSI PULLBACK`,
+                style,
+                `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} 45m trend and ${entryTimeframe}m EMA/MACD align; 15m/30m RSI confirm a pullback in that trend.`,
+                'MEDIUM'
+            );
+        }
+
+        function getTrendEntryDirection(indicators) {
+            if (!indicators ||
+                ![indicators.ema9, indicators.ema21, indicators.macd, indicators.macdSignal].every(Number.isFinite)) {
+                return 'HOLD';
+            }
+            if (indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal) return 'BUY';
+            if (indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal) return 'SELL';
+            return 'HOLD';
         }
 
         function getRsiSignal(asset, tf) {
@@ -1284,8 +1334,6 @@
                 color: 'text-sky-400',
                 isCrypto: formData.get('type') === 'crypto',
                 marketDataError: null,
-                spotOnly: false,
-                quoteUpdatedAt: null,
                 dataProvider: null
             };
             assetSlots[addingAssetSlot] = asset;

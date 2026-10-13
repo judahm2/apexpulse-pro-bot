@@ -33,142 +33,37 @@ export default async function handler(req, res) {
 
   const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
   const finnHubApiKey = process.env.FINNHUB_API_KEY;
-  const oandaApiToken = process.env.OANDA_API_TOKEN;
-  const oandaAccountId = process.env.OANDA_ACCOUNT_ID;
 
   try {
     const results = await Promise.all(symbols.map(async symbol => {
+      const errors = [];
       try {
         if (!twelveDataKey) throw new Error('TWELVE_DATA_API_KEY is not configured.');
-        return await verifyMarketResult(
-          await getTwelveDataResult(symbol, twelveDataKey, timeframe),
-          { symbol, timeframe, cryptoSymbols, finnHubApiKey, oandaApiToken, oandaAccountId }
-        );
-      } catch (primaryError) {
-        let keylessCryptoError = null;
-        if (cryptoSymbols.has(symbol)) {
-          try {
-            return await verifyMarketResult(
-              await getKeylessCryptoResult(symbol, timeframe),
-              {
-                symbol,
-                timeframe,
-                cryptoSymbols,
-                finnHubApiKey,
-                oandaApiToken,
-                oandaAccountId,
-                failedProviders: new Set(['Twelve Data'])
-              }
-            );
-          } catch (error) {
-            keylessCryptoError = error;
-          }
-        }
-
-        const errors = [`Twelve Data: ${primaryError.message}`];
-        if (keylessCryptoError) errors.push(`Binance/Coinbase: ${keylessCryptoError.message}`);
-
-        if (finnHubApiKey) {
-          try {
-            return await verifyMarketResult(
-              await getFinnhubResult(symbol, cryptoSymbols.has(symbol), finnHubApiKey, timeframe),
-              {
-                symbol,
-                timeframe,
-                cryptoSymbols,
-                finnHubApiKey,
-                oandaApiToken,
-                oandaAccountId,
-                failedProviders: new Set([
-                  'Twelve Data',
-                  ...(keylessCryptoError ? ['Binance', 'Coinbase'] : [])
-                ])
-              }
-            );
-          } catch (fallbackError) {
-            errors.push(`Finnhub: ${fallbackError.message}`);
-          }
-        }
-
-        if (symbol === 'XAG/USD') {
-          if (!oandaApiToken || !oandaAccountId) {
-            errors.push('OANDA: configure OANDA_API_TOKEN and OANDA_ACCOUNT_ID for the XAG/USD candle fallback.');
-          } else {
-            try {
-              return await verifyMarketResult(
-                await getOandaResult(symbol, oandaApiToken, oandaAccountId, timeframe),
-                {
-                  symbol,
-                  timeframe,
-                  cryptoSymbols,
-                  finnHubApiKey,
-                  oandaApiToken,
-                  oandaAccountId,
-                  failedProviders: new Set(['Twelve Data', 'Finnhub'])
-                }
-              );
-            } catch (fallbackError) {
-              errors.push(`OANDA: ${fallbackError.message}`);
-            }
-          }
-        }
-
-        try {
-          return await verifyMarketResult(
-            await getYahooFinanceResult(symbol, cryptoSymbols.has(symbol), timeframe),
-            {
-              symbol,
-              timeframe,
-              cryptoSymbols,
-              finnHubApiKey,
-              oandaApiToken,
-              oandaAccountId,
-              failedProviders: new Set([
-                'Twelve Data',
-                ...(finnHubApiKey ? ['Finnhub'] : []),
-                ...(symbol === 'XAG/USD' && oandaApiToken && oandaAccountId ? ['OANDA'] : []),
-                ...(cryptoSymbols.has(symbol) ? ['Binance', 'Coinbase'] : [])
-              ])
-            }
-          );
-        } catch (fallbackError) {
-          errors.push(`Yahoo Finance: ${fallbackError.message}`);
-        }
-
-        if (symbol === 'XAG/USD') {
-          try {
-            const quote = await getGoldApiSilverQuote();
-            return {
-              symbol,
-              ...quote,
-              provider: 'Gold API',
-              spotOnly: true,
-              marketSources: [
-                ...errors.map(error => {
-                  const separator = error.indexOf(': ');
-                  return {
-                    provider: separator < 0 ? 'Market data' : error.slice(0, separator),
-                    error: separator < 0 ? error : error.slice(separator + 2)
-                  };
-                }),
-                {
-                  provider: 'Gold API',
-                  price: quote.price,
-                  quoteUpdatedAt: quote.quoteUpdatedAt
-                }
-              ],
-              sourceVerification: {
-                status: 'unavailable',
-                reason: 'Gold API provides a current XAG/USD spot quote but no historical candles; trend signals are paused.'
-              }
-            };
-          } catch (fallbackError) {
-            errors.push(`Gold API: ${fallbackError.message}`);
-          }
-        }
-
-        return { symbol, error: errors.join(' ') };
+        const result = await getTwelveDataResult(symbol, twelveDataKey, timeframe);
+        return await verifyMarketResult(result, { symbol, timeframe, cryptoSymbols, finnHubApiKey });
+      } catch (twelveDataError) {
+        errors.push(`Twelve Data: ${twelveDataError.message}`);
       }
+
+      if (finnHubApiKey) {
+        try {
+          const result = await getFinnhubResult(symbol, cryptoSymbols.has(symbol), finnHubApiKey, timeframe);
+          result.marketSources = [
+            { provider: 'Twelve Data', error: errors[0].replace(/^Twelve Data: /, '') },
+            { provider: result.provider, price: result.price, candleClosedAt: result.candleClosedAt }
+          ];
+          result.sourceVerification = {
+            status: 'unavailable',
+            reason: 'Twelve Data failed; Finnhub is serving as the fallback, so an independent comparison is unavailable.'
+          };
+          return result;
+        } catch (finnhubError) {
+          errors.push(`Finnhub: ${finnhubError.message}`);
+        }
+      }
+
+      if (!finnHubApiKey) errors.push('Finnhub: FINNHUB_API_KEY is not configured.');
+      return { symbol, error: errors.join(' ') };
     }));
 
     return res.status(200).json({ results });
@@ -178,77 +73,21 @@ export default async function handler(req, res) {
   }
 }
 
-async function getKeylessCryptoResult(symbol, timeframe) {
-  let binanceError;
-  try {
-    return await getBinanceResult(symbol, timeframe);
-  } catch (error) {
-    binanceError = error;
-  }
-
-  try {
-    const result = await getCoinbaseResult(symbol, timeframe);
-    result.failedProviders = ['Binance'];
-    return result;
-  } catch (error) {
-    throw new Error(`Binance: ${binanceError.message} Coinbase: ${error.message}`);
-  }
-}
-
-async function verifyMarketResult(result, {
-  symbol,
-  timeframe,
-  cryptoSymbols,
-  finnHubApiKey,
-  oandaApiToken,
-  oandaAccountId,
-  failedProviders: previouslyFailedProviders = []
-}) {
+async function verifyMarketResult(result, { symbol, timeframe, cryptoSymbols, finnHubApiKey }) {
   const isCrypto = cryptoSymbols.has(symbol);
-  const failedProviders = new Set([
-    ...(result.failedProviders || []),
-    ...previouslyFailedProviders
-  ]);
-  delete result.failedProviders;
-  let checkProvider;
-  let loadCheck;
-
-  if (isCrypto) {
-    if (result.provider === 'Binance') {
-      checkProvider = 'Coinbase';
-      if (!failedProviders.has(checkProvider)) loadCheck = () => getCoinbaseResult(symbol, timeframe);
-    } else {
-      checkProvider = 'Binance';
-      if (!failedProviders.has(checkProvider)) loadCheck = () => getBinanceResult(symbol, timeframe);
-    }
-  } else if (finnHubApiKey && result.provider !== 'Finnhub' && !failedProviders.has('Finnhub')) {
-    checkProvider = 'Finnhub';
-    loadCheck = () => getFinnhubResult(symbol, false, finnHubApiKey, timeframe);
-  } else if (
-    symbol === 'XAG/USD' &&
-    oandaApiToken &&
-    oandaAccountId &&
-    result.provider !== 'OANDA' &&
-    !failedProviders.has('OANDA')
-  ) {
-    checkProvider = 'OANDA';
-    loadCheck = () => getOandaResult(symbol, oandaApiToken, oandaAccountId, timeframe);
-  } else if (result.provider !== 'Yahoo Finance' && !failedProviders.has('Yahoo Finance')) {
-    checkProvider = 'Yahoo Finance';
-    loadCheck = () => getYahooFinanceResult(symbol, false, timeframe);
-  }
+  const checkProvider = 'Finnhub';
 
   result.marketSources = [{ provider: result.provider, price: result.price, candleClosedAt: result.candleClosedAt }];
-  if (!loadCheck) {
+  if (!finnHubApiKey) {
     result.sourceVerification = {
       status: 'unavailable',
-      reason: 'No independent free comparison feed is available for this symbol.'
+      reason: 'Finnhub is unavailable because FINNHUB_API_KEY is not configured.'
     };
     return result;
   }
 
   try {
-    const comparison = await loadCheck();
+    const comparison = await getFinnhubResult(symbol, isCrypto, finnHubApiKey, timeframe);
     result.marketSources.push({
       provider: comparison.provider,
       price: comparison.price,
@@ -284,53 +123,6 @@ async function verifyMarketResult(result, {
   }
 
   return result;
-}
-
-async function getBinanceResult(symbol, timeframe) {
-  const url = new URL('https://api.binance.com/api/v3/klines');
-  url.search = new URLSearchParams({
-    symbol: getBinanceSymbol(symbol),
-    interval: '15m',
-    limit: '150'
-  }).toString();
-
-  const response = await fetch(url);
-  const candles = await readProviderJson(response, 'Binance');
-  if (!Array.isArray(candles)) throw new Error('Provider returned an invalid candle response.');
-
-  return createMarketResult(symbol, candles.map(candle => ({
-    time: Number(candle[0]) / 1000,
-    open: Number(candle[1]),
-    high: Number(candle[2]),
-    low: Number(candle[3]),
-    close: Number(candle[4]),
-    volume: Number(candle[5]),
-    closed: Number(candle[6]) < Date.now()
-  })), 'Binance', timeframe);
-}
-
-async function getCoinbaseResult(symbol, timeframe) {
-  const product = symbol.includes('/') ? symbol.replace('/', '-') : symbol;
-  const url = new URL(`https://api.exchange.coinbase.com/products/${encodeURIComponent(product)}/candles`);
-  const to = Math.floor(Date.now() / 1000);
-  url.search = new URLSearchParams({
-    granularity: '900',
-    start: String(to - (150 * BASE_INTERVAL_SECONDS)),
-    end: String(to)
-  }).toString();
-
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
-  const candles = await readProviderJson(response, 'Coinbase');
-  if (!Array.isArray(candles)) throw new Error('Provider returned an invalid candle response.');
-
-  return createMarketResult(symbol, candles.map(candle => ({
-    time: Number(candle[0]),
-    low: Number(candle[1]),
-    high: Number(candle[2]),
-    open: Number(candle[3]),
-    close: Number(candle[4]),
-    volume: Number(candle[5])
-  })).reverse(), 'Coinbase', timeframe);
 }
 
 async function getTwelveDataResult(symbol, apiKey, timeframe) {
@@ -420,99 +212,6 @@ async function getFinnhubResult(symbol, isCrypto, apiKey, timeframe) {
   return createMarketResult(symbol, candles, 'Finnhub', timeframe);
 }
 
-async function getOandaResult(symbol, apiToken, accountId, timeframe) {
-  const environment = process.env.OANDA_API_ENVIRONMENT || 'practice';
-  const host = environment === 'practice'
-    ? 'api-fxpractice.oanda.com'
-    : environment === 'live' ? 'api-fxtrade.oanda.com' : null;
-  if (!host) throw new Error('OANDA_API_ENVIRONMENT must be "practice" or "live".');
-
-  const instrument = symbol.replace('/', '_');
-  const url = new URL(`https://${host}/v3/accounts/${encodeURIComponent(accountId)}/instruments/${encodeURIComponent(instrument)}/candles`);
-  url.search = new URLSearchParams({
-    granularity: 'M15',
-    count: '150',
-    price: 'M'
-  }).toString();
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${apiToken}`
-    }
-  });
-  const data = await readProviderJson(response, 'OANDA');
-  if (!Array.isArray(data.candles)) throw new Error('Provider returned an invalid candle response.');
-
-  const candles = data.candles.map(candle => ({
-    time: parseProviderDate(candle.time),
-    open: Number(candle.mid?.o),
-    high: Number(candle.mid?.h),
-    low: Number(candle.mid?.l),
-    close: Number(candle.mid?.c),
-    closed: candle.complete
-  }));
-  return createMarketResult(symbol, candles, 'OANDA', timeframe, 'USD');
-}
-
-async function getYahooFinanceResult(symbol, isCrypto, timeframe) {
-  const ticker = getYahooFinanceSymbol(symbol, isCrypto);
-  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`);
-  url.search = new URLSearchParams({
-    range: '5d',
-    interval: '15m',
-    includePrePost: 'false'
-  }).toString();
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'Mozilla/5.0'
-    }
-  });
-  const data = await readProviderJson(response, 'Yahoo Finance');
-  const result = data.chart?.result?.[0];
-  if (!result || data.chart?.error) {
-    throw new Error(data.chart?.error?.description || `No candle data for ${ticker}.`);
-  }
-
-  const quote = result.indicators?.quote?.[0];
-  if (!quote || !Array.isArray(result.timestamp)) {
-    throw new Error('Provider returned an invalid candle response.');
-  }
-
-  const candles = result.timestamp.map((time, index) => ({
-    time: Number(time),
-    open: Number(quote.open?.[index]),
-    high: Number(quote.high?.[index]),
-    low: Number(quote.low?.[index]),
-    close: Number(quote.close?.[index]),
-    volume: Number(quote.volume?.[index])
-  }));
-  return createMarketResult(symbol, candles, 'Yahoo Finance', timeframe, result.meta?.currency);
-}
-
-async function getGoldApiSilverQuote() {
-  const response = await fetch('https://api.gold-api.com/price/XAG', {
-    headers: { Accept: 'application/json' }
-  });
-  const data = await readProviderJson(response, 'Gold API');
-  const price = Number(data.price);
-  const quoteUpdatedAt = Date.parse(data.updatedAt);
-  if (data.symbol !== 'XAG' || !Number.isFinite(price) || price <= 0 || !Number.isFinite(quoteUpdatedAt)) {
-    throw new Error('Provider returned an invalid silver spot quote.');
-  }
-  const quoteAgeMs = Date.now() - quoteUpdatedAt;
-  if (quoteAgeMs < -60_000 || quoteAgeMs > 5 * 60_000) {
-    throw new Error('Provider returned a stale or future-dated silver spot quote.');
-  }
-  return {
-    price,
-    currency: data.currency || 'USD',
-    quoteUpdatedAt: new Date(quoteUpdatedAt).toISOString()
-  };
-}
-
 async function readProviderJson(response, provider) {
   const body = await response.text();
   let data;
@@ -595,9 +294,7 @@ function createMarketResult(symbol, inputCandles, provider, timeframe, currency)
     candleClose: candleCloseByTimeframe[timeframe],
     candleCloseByTimeframe,
     candleClosedAtByTimeframe,
-    currency: currency || (provider === 'Binance' && symbol.endsWith('/USD')
-      ? 'USDT'
-      : symbol.includes('/') ? symbol.split('/').pop() : 'USD'),
+    currency: currency || (symbol.includes('/') ? symbol.split('/').pop() : 'USD'),
     changePercent: previous.close === 0 ? null : ((last.close - previous.close) / previous.close) * 100,
     rsi15: rsiByTimeframe[15],
     rsi30: rsiByTimeframe[30],
@@ -843,12 +540,6 @@ function parseProviderDate(value) {
   return timestamp / 1000;
 }
 
-function getBinanceSymbol(symbol) {
-  if (!symbol.includes('/')) return symbol;
-  const [base, quote] = symbol.split('/');
-  return `${base}${quote === 'USD' ? 'USDT' : quote}`;
-}
-
 function getFinnhubSymbol(symbol, isCrypto) {
   if (isCrypto && symbol.includes('/')) {
     const [base, quote] = symbol.split('/');
@@ -857,18 +548,6 @@ function getFinnhubSymbol(symbol, isCrypto) {
   if (symbol.includes('/')) {
     const [base, quote] = symbol.split('/');
     return `OANDA:${base}_${quote}`;
-  }
-  return symbol;
-}
-
-function getYahooFinanceSymbol(symbol, isCrypto) {
-  if (isCrypto && symbol.includes('/')) {
-    const [base, quote] = symbol.split('/');
-    return `${base}-${quote}`;
-  }
-  if (symbol.includes('/')) {
-    const [base, quote] = symbol.split('/');
-    return `${base}${quote}=X`;
   }
   return symbol;
 }

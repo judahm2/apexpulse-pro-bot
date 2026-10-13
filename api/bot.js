@@ -63,26 +63,6 @@ function createInternalResponse() {
 }
 
 function createAlert(result, timestamp) {
-  if (result.spotOnly) {
-    return {
-      action: 'HOLD',
-      confidence: 'LOW',
-      label: 'Cautionary Signal',
-      reason: `Gold API spot quote is available${result.quoteUpdatedAt ? ` as of ${result.quoteUpdatedAt}` : ''}, but candle-history feeds are unavailable. Trend analysis and trade levels are paused; no futures proxy is used.`,
-      timestamp,
-      market: {
-        symbol: result.symbol,
-        price: result.price,
-        currency: result.currency,
-        provider: result.provider,
-        quoteUpdatedAt: result.quoteUpdatedAt,
-        sources: result.marketSources,
-        sourceVerification: result.sourceVerification
-      },
-      risk: null
-    };
-  }
-
   if (result.error || !Number.isFinite(result.price)) {
     return {
       action: 'HOLD',
