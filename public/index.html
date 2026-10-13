@@ -132,6 +132,10 @@
             </div>
         </section>
 
+        <section id="calibrationSummary" aria-live="polite" class="bg-cardBg border border-borderCol rounded-2xl px-4 py-3 text-xs text-slate-400">
+            Recent directional backtest metrics are being loaded. Thresholds remain fixed; calibration is advisory.
+        </section>
+
         <!-- Metrics Overview Grid -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
             <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex flex-col gap-3">
@@ -142,6 +146,7 @@
                     <p class="text-xs text-slate-400 font-medium">Trading Strategy</p>
                 </div>
                 <select id="strategySelect" onchange="window.changeStrategy(this.value)" class="w-full bg-slate-900 border border-borderCol text-xs text-slate-200 rounded px-2 py-2 focus:outline-none focus:border-blue-500 cursor-pointer">
+                    <option value="trendFollowing">Trend Following (Buy Bull / Sell Bear)</option>
                     <option value="rsi">Dual-TF RSI Confluence</option>
                     <option value="emaMacd">EMA Crossover + MACD</option>
                     <option value="bollingerRsi">Bollinger Bands + RSI</option>
@@ -248,6 +253,7 @@
         let tradeAlertAudioContext = null;
         const lastObservedTradeStates = new Map();
         const observedTradeAlertKeys = new Set();
+        const loggedMarketSourceKeys = new Set();
         const autoScanIntervalMs = 60 * 1000;
 
         // Signals and displayed prices use the same 15-minute closed-candle feed.
@@ -312,6 +318,11 @@
                             asset.strategyIndicatorsByTimeframe = null;
                             asset.atr = null;
                             asset.atrByTimeframe = null;
+                            asset.marketDiagnosticsByTimeframe = null;
+                            asset.backtestByTimeframe = null;
+                            asset.marketSources = null;
+                            asset.sourceVerification = null;
+                            asset.calibrationDate = null;
                             asset.candleClosedAt = null;
                             asset.dataProvider = null;
                             return;
@@ -342,8 +353,16 @@
                             15: result.strategyIndicators
                         };
                         asset.atrByTimeframe = result.atrByTimeframe || { 15: result.atr };
+                        asset.marketDiagnosticsByTimeframe = result.marketDiagnosticsByTimeframe || {
+                            15: result.marketDiagnostics
+                        };
+                        asset.backtestByTimeframe = result.backtestByTimeframe || null;
+                        asset.marketSources = result.marketSources || [{ provider: asset.dataProvider }];
+                        asset.sourceVerification = result.sourceVerification || { status: 'unavailable' };
+                        asset.calibrationDate = result.calibrationDate || null;
                         asset.dataUpdatedAt = Date.now();
                         applyTimeframeData(asset, selectedTimeframe);
+                        logMarketSources(asset, result);
                         observeTradeSignal(asset);
                         if (hadError) {
                             logToConsole(`[${asset.symbol}] Live market values are available again.`, 'success');
@@ -374,6 +393,11 @@
                         asset.strategyIndicatorsByTimeframe = null;
                         asset.atr = null;
                         asset.atrByTimeframe = null;
+                        asset.marketDiagnosticsByTimeframe = null;
+                        asset.backtestByTimeframe = null;
+                        asset.marketSources = null;
+                        asset.sourceVerification = null;
+                        asset.calibrationDate = null;
                         asset.candleClosedAt = null;
                         asset.dataProvider = null;
                     });
@@ -398,10 +422,32 @@
             asset.candleClose = asset.candleCloseByTimeframe?.[barsKey] ?? null;
             asset.candleClosedAt = asset.candleClosedAtByTimeframe?.[barsKey] ?? null;
             asset.atr = asset.atrByTimeframe?.[barsKey] ?? null;
+            asset.marketDiagnostics = asset.marketDiagnosticsByTimeframe?.[barsKey] ?? null;
+            asset.backtest = asset.backtestByTimeframe?.[barsKey] ?? null;
+        }
+
+        function logMarketSources(asset, result) {
+            const candleClosedAt = result.candleClosedAt;
+            const providers = (result.marketSources || []).map(source =>
+                source.error ? `${source.provider} unavailable (${source.error})` : source.provider
+            ).join(', ');
+            const verification = result.sourceVerification || {};
+            const logKey = `${asset.symbol}:${candleClosedAt}:${providers}:${verification.status}`;
+            if (loggedMarketSourceKeys.has(logKey)) return;
+            loggedMarketSourceKeys.add(logKey);
+            if (loggedMarketSourceKeys.size > 500) {
+                loggedMarketSourceKeys.delete(loggedMarketSourceKeys.values().next().value);
+            }
+            const detail = verification.reason || (
+                Number.isFinite(verification.discrepancyPercent)
+                    ? `disagreement ${verification.discrepancyPercent.toFixed(3)}%`
+                    : 'no independent comparison feed'
+            );
+            logToConsole(`[${asset.symbol}] Data source(s): ${providers || asset.dataProvider}; verification ${verification.status || 'unavailable'} (${detail}).`, verification.status === 'discrepancy' ? 'alert' : 'info');
         }
 
         let selectedTimeframe = '15';
-        let selectedStrategy = 'rsi';
+        let selectedStrategy = 'trendFollowing';
         let addingAssetSlot = null;
 
         // Check if traditional markets are closed on weekends/holidays
@@ -451,11 +497,13 @@
         }
 
         const strategyNames = {
+            trendFollowing: 'Trend Following (Buy Bull / Sell Bear)',
             rsi: 'Dual-TF RSI Confluence',
             emaMacd: 'EMA Crossover + MACD',
             bollingerRsi: 'Bollinger Bands + RSI'
         };
         const strategyDescriptions = {
+            trendFollowing: ['Trend Alignment', '45m regime + EMA/MACD + RSI'],
             rsi: ['Day-Trader Filter', 'Strict Confluence'],
             emaMacd: ['Trend Following', 'EMA 9/21 + MACD'],
             bollingerRsi: ['Mean Reversion', 'Bands + RSI 14']
@@ -637,14 +685,11 @@
                 observedTradeAlertKeys.delete(observedTradeAlertKeys.values().next().value);
             }
             const alert = createTradeAlert(asset, signal, plan);
-            if (signal.raw === 'HOLD') {
-                logToConsole(JSON.stringify(alert), 'info');
-                return;
-            }
+            if (signal.raw === 'HOLD') return;
 
             const direction = signal.raw === 'SELL' ? 'SELL / SHORT' : 'BUY';
             const indicators = alert.market.indicators;
-            const body = `${direction} ${asset.symbol} • ${signal.confidence} confidence. ${signal.reason} Price ${alert.market.price} ${alert.market.currency}; RSI 15/30/45m ${indicators.rsi15}/${indicators.rsi30}/${indicators.rsi45}. Entry ${plan.entry}, stop ${plan.invalidation}, 2R target ${plan.target}. Position size not calculated; apply account-specific risk limits. ${alert.timestamp}`;
+            const body = `${signal.confidenceLabel}: ${direction} ${asset.symbol} • ${signal.confidence} confidence. ${signal.reason} Price ${alert.market.price} ${alert.market.currency}; RSI 15/30/45m ${indicators.rsi15}/${indicators.rsi30}/${indicators.rsi45}. Entry ${plan.entry}, stop ${plan.invalidation}, 2R target ${plan.target}. ${plan.stopRationale} Position size not calculated; apply account-specific risk limits. ${alert.timestamp}`;
 
             logToConsole(JSON.stringify(alert), signal.raw === 'BUY' ? 'success' : 'alert');
             if (!tradeAlertsEnabled) return;
@@ -670,6 +715,7 @@
                 reason: signal.reason,
                 confidence: signal.confidence,
                 timestamp: new Date().toISOString(),
+                label: signal.confidenceLabel,
                 market: {
                     symbol: asset.symbol,
                     timeframe: `${selectedTimeframe}m`,
@@ -677,6 +723,12 @@
                     price: asset.candleClose,
                     currency: asset.currency,
                     candleClosedAt: closedAt,
+                    regime: asset.marketDiagnostics?.regime ?? null,
+                    diagnostics: asset.marketDiagnostics,
+                    marketSources: asset.marketSources,
+                    sourceVerification: asset.sourceVerification,
+                    backtest: asset.backtest?.[selectedStrategy] ?? null,
+                    calibrationDate: asset.calibrationDate,
                     indicators: {
                         rsi15: formatAlertValue(asset.rsi15),
                         rsi30: formatAlertValue(asset.rsi30),
@@ -693,6 +745,7 @@
                     stopLoss: plan.invalidationValue,
                     takeProfit: plan.targetValue,
                     riskRewardRatio: '2:1',
+                    rationale: plan.stopRationale,
                     positionSize: null,
                     positionSizingNote: 'Not calculated; apply account- and instrument-specific risk limits before trading.'
                 } : null
@@ -744,15 +797,183 @@
                 return createStrategySignal('PAUSED', 'MARKET ON BREAK (Paused)', 'bg-amber-500/10 text-amber-400 border-amber-500/30', marketBreak.reason, 'LOW');
             }
 
-            if (selectedStrategy === 'emaMacd') return getEmaMacdSignal(asset, tf);
-            if (selectedStrategy === 'bollingerRsi') return getBollingerRsiSignal(asset, tf);
+            const diagnostics = asset.marketDiagnostics;
+            if (!diagnostics) {
+                return createStrategySignal('UNAVAILABLE', 'MARKET FILTERS UNAVAILABLE', 'bg-amber-500/10 text-amber-300 border-amber-500/30', 'Volatility and liquidity diagnostics are unavailable.', 'LOW');
+            }
+            const filterReason = getMarketFilterReason(asset, diagnostics);
+            if (filterReason) {
+                return createStrategySignal('HOLD', `CAUTIONARY HOLD (${diagnostics.regime})`, 'bg-amber-500/10 text-amber-300 border-amber-500/30', filterReason, 'LOW');
+            }
 
-            let primaryRsi = asset.rsi15;
-            let secondaryRsi = asset.rsi30;
-            let secondaryTimeframe = '30';
-            if (tf === '30') { primaryRsi = asset.rsi30; secondaryRsi = asset.rsi45; secondaryTimeframe = '45'; }
-            if (tf === '45') { primaryRsi = asset.rsi45; secondaryRsi = asset.rsi30; secondaryTimeframe = '30'; }
+            if (selectedStrategy === 'trendFollowing') {
+                return getTrendFollowingSignal(asset, tf);
+            }
 
+            const active = getRawStrategySignal(getTimeframeAsset(asset, tf), selectedStrategy, tf);
+            if (!['BUY', 'SELL'].includes(active.raw)) {
+                active.reason = `${active.reason} Regime: ${diagnostics.regime}.`;
+                active.text = `CAUTIONARY ${active.raw} (${diagnostics.regime})`;
+                active.confidence = 'LOW';
+                return active;
+            }
+
+            const sourceVerification = asset.sourceVerification || {};
+            if (sourceVerification.status === 'discrepancy') {
+                return createStrategySignal('HOLD', `CAUTIONARY HOLD (${diagnostics.regime})`, 'bg-amber-500/10 text-amber-300 border-amber-500/30', `Conflicting data feeds: ${sourceVerification.reason}`, 'LOW');
+            }
+
+            const weights = diagnostics.regime === 'Trending'
+                ? { rsi: 0.3, emaMacd: 0.5, bollingerRsi: 0.2 }
+                : { rsi: 0.35, emaMacd: 0.15, bollingerRsi: 0.5 };
+            const strategyVotes = Object.fromEntries(
+                ['rsi', 'emaMacd', 'bollingerRsi'].map(strategy => [
+                    strategy,
+                    getRawStrategySignal(getTimeframeAsset(asset, tf), strategy, tf).raw
+                ])
+            );
+            const strategyScore = Object.entries(strategyVotes).reduce((score, [strategy, vote]) =>
+                score + (vote === active.raw ? weights[strategy] : vote === 'HOLD' || vote === 'UNAVAILABLE' ? 0 : -weights[strategy]), 0);
+            const timeframeVotes = ['15', '30', '45']
+                .filter(timeframe => timeframe !== tf)
+                .map(timeframe => getRawStrategySignal(getTimeframeAsset(asset, timeframe), selectedStrategy, timeframe).raw);
+            const alignedTimeframes = timeframeVotes.filter(vote => vote === active.raw).length;
+            const opposingTimeframes = timeframeVotes.filter(vote => ['BUY', 'SELL'].includes(vote) && vote !== active.raw).length;
+            const compositeScore = strategyScore + (0.25 * (alignedTimeframes - opposingTimeframes));
+            const scoreLabel = compositeScore.toFixed(2);
+            if (compositeScore < 0.45) {
+                return createStrategySignal(
+                    'HOLD',
+                    `CAUTIONARY HOLD (${diagnostics.regime})`,
+                    'bg-amber-500/10 text-amber-300 border-amber-500/30',
+                    `${active.reason} Composite score ${scoreLabel} is below the 0.45 entry threshold or conflicts with the setup; ${alignedTimeframes}/2 other timeframes align, ${opposingTimeframes}/2 oppose. Strategy votes: RSI ${strategyVotes.rsi}, EMA/MACD ${strategyVotes.emaMacd}, Bollinger/RSI ${strategyVotes.bollingerRsi}.`,
+                    'LOW'
+                );
+            }
+
+            const confidence = alignedTimeframes > 0 &&
+                Math.abs(strategyScore) >= 0.5 &&
+                sourceVerification.status === 'verified' &&
+                diagnostics.volumeAvailable
+                ? 'HIGH'
+                : 'MEDIUM';
+            const label = confidence === 'HIGH' ? 'HIGH-PROBABILITY' : 'CAUTIONARY';
+            return createStrategySignal(
+                active.raw,
+                `${label} ${active.raw} (${diagnostics.regime}, score ${scoreLabel})`,
+                active.style,
+                `${active.reason} Regime: ${diagnostics.regime}; adaptive weights RSI ${weights.rsi}, EMA/MACD ${weights.emaMacd}, Bollinger/RSI ${weights.bollingerRsi}. Composite score ${scoreLabel} (threshold 0.45); ${alignedTimeframes}/2 other timeframes align.`,
+                confidence
+            );
+        }
+
+        function getMarketFilterReason(asset, diagnostics) {
+            if (asset.sourceVerification?.status === 'discrepancy') {
+                return `Conflicting data feeds: ${asset.sourceVerification.reason}`;
+            }
+            if (diagnostics.lowVolatility) {
+                return `Quiet market: ATR is ${diagnostics.atrPercent.toFixed(3)}% of price, below the 0.02% minimum.`;
+            }
+            if (diagnostics.erraticSpike) {
+                return `Erratic volatility spike: the latest candle range is ${diagnostics.spikeRatio.toFixed(2)}× the recent median.`;
+            }
+            if (diagnostics.lowVolume) {
+                return `Unusually low volume: the latest candle is ${diagnostics.volumeRatio.toFixed(2)}× the recent average.`;
+            }
+            return null;
+        }
+
+        function getTimeframeAsset(asset, timeframe) {
+            const key = String(timeframe);
+            return {
+                ...asset,
+                strategyRsi: asset.rsiByTimeframe?.[key] ?? null,
+                strategyIndicators: asset.strategyIndicatorsByTimeframe?.[key] ?? null,
+                candleClose: asset.candleCloseByTimeframe?.[key] ?? null,
+                atr: asset.atrByTimeframe?.[key] ?? null
+            };
+        }
+
+        function getRawStrategySignal(asset, strategy, timeframe) {
+            if (strategy === 'trendFollowing') return getTrendFollowingSignal(asset, timeframe);
+            if (strategy === 'emaMacd') return getEmaMacdSignal(asset, timeframe);
+            if (strategy === 'bollingerRsi') return getBollingerRsiSignal(asset, timeframe);
+            return getRsiSignal(asset, timeframe);
+        }
+
+        function getTrendDirection(indicators, rsi) {
+            if (!indicators ||
+                ![indicators.ema9, indicators.ema21, indicators.macd, indicators.macdSignal].every(Number.isFinite) ||
+                !Number.isFinite(rsi)) return 'HOLD';
+            if (indicators.ema9 > indicators.ema21 &&
+                indicators.macd > indicators.macdSignal &&
+                rsi > 50) return 'BUY';
+            if (indicators.ema9 < indicators.ema21 &&
+                indicators.macd < indicators.macdSignal &&
+                rsi < 50) return 'SELL';
+            return 'HOLD';
+        }
+
+        function getTrendFollowingSignal(asset, tf) {
+            const regimeIndicators = asset.strategyIndicatorsByTimeframe?.['45'];
+            const regimeDirection = getTrendDirection(regimeIndicators, asset.rsiByTimeframe?.['45']);
+            if (regimeDirection === 'HOLD') {
+                return createStrategySignal(
+                    'HOLD',
+                    'WAITING FOR DIRECTIONAL TREND',
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    'The 45m EMA9/EMA21, MACD, and RSI do not confirm a bullish or bearish regime; wait for direction before looking for entries.',
+                    'LOW'
+                );
+            }
+
+            const entryTimeframe = tf === '45' ? '15' : String(tf);
+            const entryAsset = getTimeframeAsset(asset, entryTimeframe);
+            const entryDirection = getTrendDirection(entryAsset.strategyIndicators, entryAsset.strategyRsi);
+            const otherEntryTimeframe = entryTimeframe === '15' ? '30' : '15';
+            const otherDirection = getTrendDirection(
+                asset.strategyIndicatorsByTimeframe?.[otherEntryTimeframe],
+                asset.rsiByTimeframe?.[otherEntryTimeframe]
+            );
+            const alignedTimeframes = [regimeDirection, entryDirection, otherDirection]
+                .filter(direction => direction === regimeDirection).length;
+            if (entryDirection !== regimeDirection || alignedTimeframes < 2) {
+                return createStrategySignal(
+                    'HOLD',
+                    `WAITING FOR ${regimeDirection === 'BUY' ? 'BUY' : 'SELL'} CONFIRMATION`,
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} 45m EMA/MACD/RSI regime established, but the ${entryTimeframe}m entry and at least one other timeframe among 15m, 30m, and 45m must confirm before a ${regimeDirection === 'BUY' ? 'buy' : 'sell'} entry.`,
+                    'LOW'
+                );
+            }
+
+            const indicators = entryAsset.strategyIndicators;
+            const rsi = entryAsset.strategyRsi;
+            const action = regimeDirection;
+            const sourceVerified = asset.sourceVerification?.status === 'verified';
+            const diagnostics = asset.marketDiagnostics;
+            const confidence = alignedTimeframes === 3 &&
+                sourceVerified &&
+                diagnostics?.volumeAvailable
+                ? 'HIGH'
+                : 'MEDIUM';
+            const style = action === 'BUY'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+            const direction = action === 'BUY' ? 'bullish' : 'bearish';
+            return createStrategySignal(
+                action,
+                `${confidence === 'HIGH' ? 'HIGH-PROBABILITY' : 'CAUTIONARY'} ${action} THE ${direction.toUpperCase()} TREND (${entryTimeframe}m entry / 45m regime)`,
+                style,
+                `${direction[0].toUpperCase()}${direction.slice(1)} regime: 45m EMA9 ${regimeIndicators.ema9.toFixed(4)} ${action === 'BUY' ? '>' : '<'} EMA21 ${regimeIndicators.ema21.toFixed(4)} and MACD confirms. ${entryTimeframe}m EMA9 ${indicators.ema9.toFixed(4)} ${action === 'BUY' ? '>' : '<'} EMA21 ${indicators.ema21.toFixed(4)}, MACD ${indicators.macd.toFixed(4)} ${action === 'BUY' ? '>' : '<'} signal ${indicators.macdSignal.toFixed(4)}, RSI ${rsi.toFixed(1)} ${action === 'BUY' ? '>50' : '<50'}. ${alignedTimeframes}/3 timeframes align; feed check ${asset.sourceVerification?.status || 'unavailable'}.`,
+                confidence
+            );
+        }
+
+        function getRsiSignal(asset, tf) {
+            let primaryRsi = asset.rsiByTimeframe?.[tf] ?? asset[`rsi${tf}`];
+            let secondaryTimeframe = tf === '30' ? '45' : '30';
+            const secondaryRsi = asset.rsiByTimeframe?.[secondaryTimeframe] ?? asset[`rsi${secondaryTimeframe}`];
             if (!Number.isFinite(primaryRsi) || !Number.isFinite(secondaryRsi)) {
                 return createStrategySignal('UNAVAILABLE', 'DATA UNAVAILABLE', 'bg-slate-800 text-slate-400 border-slate-700', 'RSI history is insufficient for the selected timeframes.', 'LOW');
             }
@@ -762,18 +983,14 @@
             const indicators = asset.strategyIndicators || {};
             const bullishTrend = indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal;
             const bearishTrend = indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal;
-            const isHighConfidenceBuy = primaryRsi <= 25 && secondaryRsi <= 30 && bullishTrend;
-            const isHighConfidenceSell = primaryRsi >= 75 && secondaryRsi >= 70 && bearishTrend;
-
             if (isOversoldConfluent) {
                 const reason = `${tf}m RSI ${primaryRsi.toFixed(1)} is oversold (≤30) and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms (≤38); EMA/MACD trend ${bullishTrend ? 'is bullish' : 'does not confirm bullishly'}.`;
-                return createStrategySignal('BUY', `BULLISH SETUP (${tf}m RSI Confluence)`, 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', reason, isHighConfidenceBuy ? 'HIGH' : 'MEDIUM');
+                return createStrategySignal('BUY', `BULLISH SETUP (${tf}m RSI Confluence)`, 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', reason, 'MEDIUM');
             }
             if (isOverboughtConfluent) {
                 const reason = `${tf}m RSI ${primaryRsi.toFixed(1)} is overbought (≥70) and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms (≥62); EMA/MACD trend ${bearishTrend ? 'is bearish' : 'does not confirm bearishly'}.`;
-                return createStrategySignal('SELL', `BEARISH SETUP (${tf}m RSI Confluence)`, 'bg-rose-500/10 text-rose-400 border-rose-500/30', reason, isHighConfidenceSell ? 'HIGH' : 'MEDIUM');
+                return createStrategySignal('SELL', `BEARISH SETUP (${tf}m RSI Confluence)`, 'bg-rose-500/10 text-rose-400 border-rose-500/30', reason, 'MEDIUM');
             }
-
             return createStrategySignal('HOLD', `FILTERED HOLD (${tf}m No Confluence)`, 'bg-slate-800 text-slate-300 border-slate-700', `No RSI entry confluence: ${tf}m RSI ${primaryRsi.toFixed(1)} must be ≤30 or ≥70 and ${secondaryTimeframe}m RSI must confirm.`, 'LOW');
         }
 
@@ -828,7 +1045,10 @@
         }
 
         function createStrategySignal(raw, text, style, reason, confidence) {
-            return { raw, text, style, reason, confidence };
+            const confidenceLabel = confidence === 'HIGH' && ['BUY', 'SELL'].includes(raw)
+                ? 'High-Probability Setup'
+                : 'Cautionary Signal';
+            return { raw, text, style, reason, confidence, confidenceLabel };
         }
 
         function getReferencePlan(asset, signal) {
@@ -837,9 +1057,21 @@
                 !Number.isFinite(asset.atr) ||
                 asset.atr <= 0) return null;
 
-            const riskDistance = asset.atr * 1.5;
             const entry = asset.candleClose;
-            const invalidation = signal.raw === 'BUY' ? entry - riskDistance : entry + riskDistance;
+            const baseRiskDistance = asset.atr * 1.5;
+            const levels = asset.marketDiagnostics || {};
+            const structureLevel = signal.raw === 'BUY' ? levels.support : levels.resistance;
+            const structureBuffer = asset.atr * 0.1;
+            const structureStop = Number.isFinite(structureLevel)
+                ? signal.raw === 'BUY' ? structureLevel - structureBuffer : structureLevel + structureBuffer
+                : null;
+            const structureIsNearby = Number.isFinite(structureStop) &&
+                Math.abs(entry - structureStop) <= baseRiskDistance * 1.25;
+            const atrStop = signal.raw === 'BUY' ? entry - baseRiskDistance : entry + baseRiskDistance;
+            const invalidation = structureIsNearby
+                ? signal.raw === 'BUY' ? Math.min(atrStop, structureStop) : Math.max(atrStop, structureStop)
+                : atrStop;
+            const riskDistance = Math.abs(entry - invalidation);
             const target = signal.raw === 'BUY' ? entry + (riskDistance * 2) : entry - (riskDistance * 2);
             const format = value => value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
             return {
@@ -848,7 +1080,10 @@
                 target: format(target),
                 riskDistance: format(riskDistance),
                 invalidationValue: invalidation,
-                targetValue: target
+                targetValue: target,
+                stopRationale: structureIsNearby
+                    ? `ATR stop refined beyond recent ${signal.raw === 'BUY' ? 'support' : 'resistance'} with a 0.1× ATR buffer; target remains 2R.`
+                    : 'ATR-based stop at 1.5× ATR; no nearby support/resistance level justified a refinement. Target is 2R.'
             };
         }
 
@@ -986,7 +1221,7 @@
                             ${escapeHtml(signalObj.text)}
                         </div>
                         <div class="mt-2 text-[10px] leading-relaxed text-slate-400">
-                            <span class="font-semibold ${signalObj.confidence === 'HIGH' ? 'text-emerald-300' : signalObj.confidence === 'MEDIUM' ? 'text-amber-300' : 'text-slate-300'}">${escapeHtml(signalObj.confidence)} CONFIDENCE</span>
+                            <span class="font-semibold ${signalObj.confidence === 'HIGH' ? 'text-emerald-300' : signalObj.confidence === 'MEDIUM' ? 'text-amber-300' : 'text-slate-300'}">${escapeHtml(signalObj.confidenceLabel.toUpperCase())} • ${escapeHtml(signalObj.confidence)} CONFIDENCE</span>
                             <span aria-hidden="true"> • </span>${escapeHtml(signalObj.reason)}
                         </div>
                         <section aria-label="Trade decision" class="mt-3 rounded-xl border border-borderCol bg-slate-950/50 p-3 space-y-3">
@@ -998,9 +1233,16 @@
                                     <div><dt class="text-slate-500">Target (2R)</dt><dd class="font-mono text-slate-200">${referencePlan.target}</dd></div>
                                     <div><dt class="text-slate-500">Risk distance</dt><dd class="font-mono text-slate-200">${referencePlan.riskDistance}</dd></div>
                                 </dl>
+                                <p class="text-[10px] leading-relaxed text-slate-400">${escapeHtml(referencePlan.stopRationale)}</p>
                             ` : signalObj.raw === 'BUY' || signalObj.raw === 'SELL'
                                 ? '<p class="text-[10px] leading-relaxed text-amber-300">ATR-based stop and target are unavailable, so this setup has no complete trade plan.</p>'
                                 : '<p class="text-[10px] leading-relaxed text-slate-500">Wait for a valid, fresh setup before considering a trade.</p>'}
+                            <div class="border-t border-borderCol pt-2 space-y-1 text-[10px] text-slate-400">
+                                <p><span class="text-slate-500">Regime:</span> ${escapeHtml(asset.marketDiagnostics?.regime || 'Unavailable')} • <span class="text-slate-500">ATR:</span> ${Number.isFinite(asset.marketDiagnostics?.atrPercent) ? `${asset.marketDiagnostics.atrPercent.toFixed(3)}%` : 'Unavailable'}</p>
+                                <p><span class="text-slate-500">Volume:</span> ${asset.marketDiagnostics?.volumeAvailable ? `${asset.marketDiagnostics.volumeRatio.toFixed(2)}× average` : 'Unavailable from feed (not filtered)'} • <span class="text-slate-500">Feed check:</span> ${escapeHtml(asset.sourceVerification?.status || 'unavailable')}</p>
+                                <p><span class="text-slate-500">Sources:</span> ${escapeHtml((asset.marketSources || []).map(source => source.provider).join(', ') || asset.dataProvider || 'Unavailable')}</p>
+                                <p><span class="text-slate-500">Recent ${escapeHtml(strategyNames[selectedStrategy])} backtest:</span> ${asset.backtest?.[selectedStrategy]?.closedTrades ? `${asset.backtest[selectedStrategy].closedTrades} trades • ${asset.backtest[selectedStrategy].winRatePercent.toFixed(1)}% wins • ${asset.backtest[selectedStrategy].netR.toFixed(2)}R net` : 'No closed samples'} • Calibrated ${asset.calibrationDate ? escapeHtml(new Date(asset.calibrationDate).toLocaleDateString()) : 'Unavailable'}</p>
+                            </div>
                         </section>
                     </div>
                 `;
@@ -1008,6 +1250,28 @@
             });
 
             document.getElementById('trackedAssetCount').textContent = `${assets.length} / 5 Assets`;
+            renderCalibrationSummary();
+        }
+
+        function renderCalibrationSummary() {
+            const summary = document.getElementById('calibrationSummary');
+            const asset = assets.find(candidate => candidate.backtest && candidate.calibrationDate);
+            if (!asset) {
+                summary.textContent = 'Backtest calibration is unavailable until historical candles load. Thresholds remain fixed; no automatic tuning is applied.';
+                return;
+            }
+
+            const date = new Date(asset.calibrationDate).toLocaleString();
+            const strategies = [
+                ['RSI', asset.backtest.rsi],
+                ['EMA/MACD', asset.backtest.emaMacd],
+                ['Bollinger/RSI', asset.backtest.bollingerRsi],
+                ['Trend following', asset.backtest.trendFollowing]
+            ].map(([name, stats]) => {
+                if (!stats || !stats.closedTrades) return `${name}: no closed samples`;
+                return `${name}: ${stats.closedTrades} trades, ${stats.winRatePercent.toFixed(1)}% wins, ${stats.netR.toFixed(2)}R net`;
+            }).join(' • ');
+            summary.textContent = `Recent historical backtest • ${asset.symbol} • Last calibration candle: ${date} • ${strategies}. Fixed 1.5 ATR stop / 2R target; historical results exclude fees, spread, and slippage and do not change live thresholds.`;
         }
 
         function escapeHtml(value) {
@@ -1126,6 +1390,7 @@
             try {
                 await updateCustomMarketPrices(true);
                 logToConsole(`Evaluating ${strategyNames[scanStrategy]} setups using the latest available closed candles.`, 'info');
+                const noSetupSymbols = [];
                 assets.forEach(asset => {
                     const mb = checkMarketBreak(asset.isCrypto);
                     if (mb.isOnBreak) {
@@ -1141,10 +1406,16 @@
                             const plan = getReferencePlan(asset, sig);
                             logToConsole(`[${asset.symbol}] Trade guidance: SELL / SHORT (${scanTimeframe}m, ${asset.dataProvider}, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Trade plan incomplete (ATR levels unavailable); do not act on this setup.'}`, 'alert');
                         } else {
-                            logToConsole(`[${asset.symbol}] No setup under the selected strategy (${scanTimeframe}m).`, 'info');
+                            noSetupSymbols.push(asset.symbol);
                         }
                     }
                 });
+                if (noSetupSymbols.length) {
+                    logToConsole(
+                        `No ${strategyNames[scanStrategy]} setup on ${scanTimeframe}m for ${noSetupSymbols.length} asset${noSetupSymbols.length === 1 ? '' : 's'}: ${noSetupSymbols.join(', ')}. Individual HOLD reasons remain on each asset card.`,
+                        'info'
+                    );
+                }
 
                 const lastRunElem = document.getElementById('lastRunTime');
                 if (lastRunElem) {

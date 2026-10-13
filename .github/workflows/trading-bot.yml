@@ -14,5 +14,5 @@ jobs:
           VERCEL_URL: ${{ secrets.VERCEL_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -X GET "https://$VERCEL_URL/api/bot" \
+          curl --fail --show-error --silent -X GET "https://$VERCEL_URL/api/bot" \
             -H "Authorization: Bearer $CRON_SECRET"

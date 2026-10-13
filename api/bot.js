@@ -1,95 +1,315 @@
+import marketDataHandler from './market-data.js';
+
 export default async function handler(req, res) {
   const authHeader = req.headers.authorization;
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'Unauthorized request' });
   }
 
-  const TWELVE_DATA_API_KEY = process.env.TWELVE_DATA_API_KEY;
   const symbols = ['XAU/USD', 'BTC/USD', 'XAG/USD', 'EUR/USD', 'AUD/USD'];
-  const results = [];
-
-  function checkMarketBreak(symbol) {
-    if (symbol.includes('BTC')) return false;
-    const now = new Date();
-    const utcDay = now.getUTCDay();
-    const utcHour = now.getUTCHours();
-    if (utcDay === 6) return true;
-    if (utcDay === 0 && utcHour < 21) return true;
-    if (utcDay === 5 && utcHour >= 21) return true;
-    return false;
-  }
 
   try {
-    for (const symbol of symbols) {
-      if (checkMarketBreak(symbol)) {
-        results.push({ symbol, status: 'MARKET_ON_BREAK', signal: 'PAUSED' });
-        continue;
+    const marketResponse = createInternalResponse();
+    await marketDataHandler({
+      method: 'GET',
+      query: {
+        symbols: symbols.join(','),
+        cryptoSymbols: 'BTC/USD',
+        timeframe: '15'
       }
-
-      const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=15min&outputsize=30&apikey=${TWELVE_DATA_API_KEY}`;
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.status === 'error' || !data.values) {
-        results.push({ symbol, error: data.message || 'Failed to fetch' });
-        continue;
-      }
-
-      const closes = data.values.reverse().map(c => parseFloat(c.close));
-      const rsi15 = calculateRSI(closes, 14);
-      const rsi30 = calculateRSI(closes.slice(0, -2), 14);
-
-      let signal = 'HOLD';
-      if (rsi15 <= 30 && rsi30 <= 38) signal = 'BUY_SIGNAL (Confluent)';
-      if (rsi15 >= 70 && rsi30 >= 62) signal = 'SELL_SIGNAL (Confluent)';
-
-      results.push({
-        symbol,
-        price: closes[closes.length - 1],
-        rsi15: rsi15 ? rsi15.toFixed(2) : 'N/A',
-        rsi30: rsi30 ? rsi30.toFixed(2) : 'N/A',
-        signal
-      });
+    }, marketResponse);
+    if (marketResponse.statusCode !== 200 || !Array.isArray(marketResponse.body?.results)) {
+      throw new Error(marketResponse.body?.error || `Market-data scan failed (HTTP ${marketResponse.statusCode}).`);
     }
 
-    let alertBody = "📊 **Apexatix Pro Bot Day-Trading Scan**\n\n";
-    results.forEach(item => {
-      alertBody += `🔹 **${item.symbol}**\n   Price: ${item.price || 'N/A'}\n   15m RSI: ${item.rsi15}\n   30m RSI: ${item.rsi30}\n   Status: ${item.signal}\n\n`;
-    });
+    const results = marketResponse.body.results;
+    const timestamp = new Date().toISOString();
+    const alerts = results.map(result => createAlert(result, timestamp));
 
     if (process.env.DISCORD_WEBHOOK_URL) {
-      await fetch(process.env.DISCORD_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: alertBody })
-      });
+      for (const content of createDiscordMessages(alerts)) {
+        const webhookResponse = await fetch(process.env.DISCORD_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content })
+        });
+        if (!webhookResponse.ok) {
+          throw new Error(`Discord webhook returned HTTP ${webhookResponse.status}.`);
+        }
+      }
     }
 
-    return res.status(200).json({ success: true, results });
+    return res.status(200).json({ success: true, timestamp, alerts, results });
   } catch (error) {
+    console.error('Scheduled trading scan failed:', error);
     return res.status(500).json({ error: error.message });
   }
 }
 
-function calculateRSI(prices, period = 14) {
-  if (prices.length < period + 1) return null;
-  let gains = 0, losses = 0;
-  for (let i = 1; i <= period; i++) {
-    const diff = prices[i] - prices[i - 1];
-    if (diff >= 0) gains += diff; else losses -= diff;
-  }
-  let avgGain = gains / period, avgLoss = losses / period;
-  for (let i = period + 1; i < prices.length; i++) {
-    const diff = prices[i] - prices[i - 1];
-    if (diff >= 0) {
-      avgGain = (avgGain * (period - 1) + diff) / period;
-      avgLoss = (avgLoss * (period - 1)) / period;
-    } else {
-      avgGain = (avgGain * (period - 1)) / period;
-      avgLoss = (avgLoss * (period - 1) - diff) / period;
+function createInternalResponse() {
+  return {
+    statusCode: 200,
+    body: null,
+    setHeader() {},
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body) {
+      this.body = body;
+      return this;
     }
+  };
+}
+
+function createAlert(result, timestamp) {
+  if (result.error || !Number.isFinite(result.price)) {
+    return {
+      action: 'HOLD',
+      confidence: 'LOW',
+      label: 'Cautionary Signal',
+      reason: result.error || 'No valid market price was returned.',
+      timestamp,
+      market: { symbol: result.symbol, sources: result.marketSources || [] },
+      risk: null
+    };
   }
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
+
+  const diagnostics = result.marketDiagnostics;
+  const market = {
+    symbol: result.symbol,
+    timeframe: '15m',
+    price: result.candleClose,
+    currency: result.currency,
+    provider: result.provider,
+    sources: result.marketSources,
+    sourceVerification: result.sourceVerification,
+    candleClosedAt: new Date(result.candleClosedAt).toISOString(),
+    regime: diagnostics?.regime || 'Unknown',
+    diagnostics,
+    backtest: result.backtestByTimeframe?.['15'] || null,
+    calibrationDate: result.calibrationDate,
+    indicators: {
+      rsi15: result.rsi15,
+      rsi30: result.rsi30,
+      rsi45: result.rsi45,
+      ...result.strategyIndicators
+    }
+  };
+  const filterReason = getFilterReason(result, diagnostics);
+  const active = getTrendFollowingSignal(result);
+  if (filterReason) {
+    return { action: 'HOLD', confidence: 'LOW', label: 'Cautionary Signal', reason: filterReason, timestamp, market, risk: null };
+  }
+  if (!['BUY', 'SELL'].includes(active.action)) {
+    return {
+      action: 'HOLD',
+      confidence: 'LOW',
+      label: 'Cautionary Signal',
+      reason: `${active.reason} Regime: ${diagnostics.regime}.`,
+      timestamp,
+      market,
+      risk: null
+    };
+  }
+
+  const alignedTimeframes = [15, 30, 45]
+    .map(timeframe => getTrendDirection(
+      result.strategyIndicatorsByTimeframe?.[String(timeframe)],
+      result.rsiByTimeframe?.[String(timeframe)]
+    ))
+    .filter(direction => direction === active.action).length;
+  const compositeScore = alignedTimeframes / 3;
+  if (alignedTimeframes < 2 || compositeScore < 0.65) {
+    return {
+      action: 'HOLD',
+      confidence: 'LOW',
+      label: 'Cautionary Signal',
+      reason: `${active.reason} Trend score ${compositeScore.toFixed(2)} is below the 0.65 threshold; only ${alignedTimeframes}/3 timeframes align.`,
+      timestamp,
+      market,
+      risk: null
+    };
+  }
+
+  const confidence = alignedTimeframes > 0 &&
+    alignedTimeframes === 3 &&
+    result.sourceVerification?.status === 'verified' &&
+    diagnostics.volumeAvailable
+    ? 'HIGH'
+    : 'MEDIUM';
+  const risk = createRiskPlan(result, active.action);
+  if (!risk) {
+    return {
+      action: 'HOLD',
+      confidence: 'LOW',
+      label: 'Cautionary Signal',
+      reason: `${active.reason} ATR-based stop and target are unavailable, so the setup is incomplete.`,
+      timestamp,
+      market,
+      risk: null
+    };
+  }
+  return {
+    action: active.action,
+    confidence,
+    label: confidence === 'HIGH' ? 'High-Probability Setup' : 'Cautionary Signal',
+    reason: `${active.reason} Regime: ${diagnostics.regime}. Trend score ${compositeScore.toFixed(2)} (threshold 0.65); ${alignedTimeframes}/3 timeframes align.`,
+    timestamp,
+    market,
+    risk
+  };
+}
+
+function getFilterReason(result, diagnostics) {
+  if (!diagnostics) return 'Volatility and liquidity diagnostics are unavailable.';
+  const candleAge = Date.now() - result.candleClosedAt;
+  if (!Number.isFinite(candleAge) || candleAge < 0 || candleAge > (17 * 60 * 1000)) {
+    return `Stale market data: the latest completed candle is ${Number.isFinite(candleAge) ? Math.round(candleAge / 60000) : 'an invalid number of'} minutes old.`;
+  }
+  if (result.sourceVerification?.status === 'discrepancy') return `Conflicting data feeds: ${result.sourceVerification.reason}`;
+  if (diagnostics.lowVolatility) return `Quiet market: ATR is ${diagnostics.atrPercent.toFixed(3)}%, below the 0.02% minimum.`;
+  if (diagnostics.erraticSpike) return `Erratic candle range is ${diagnostics.spikeRatio.toFixed(2)}× the recent median.`;
+  if (diagnostics.lowVolume) return `Unusually low volume: ${diagnostics.volumeRatio.toFixed(2)}× the recent average.`;
+  return null;
+}
+
+function getRawSignal(result, strategy, timeframe) {
+  const key = String(timeframe);
+  const rsi = result.rsiByTimeframe?.[key];
+  const indicators = result.strategyIndicatorsByTimeframe?.[key];
+  if (strategy === 'rsi') {
+    const secondaryTimeframe = timeframe === 30 ? '45' : '30';
+    const secondaryRsi = result.rsiByTimeframe?.[secondaryTimeframe];
+    if (!Number.isFinite(rsi) || !Number.isFinite(secondaryRsi)) {
+      return { action: 'UNAVAILABLE', reason: 'RSI history is insufficient for multi-timeframe confirmation.' };
+    }
+    if (rsi <= 30 && secondaryRsi <= 38) {
+      return { action: 'BUY', reason: `${timeframe}m RSI ${rsi.toFixed(1)} is oversold and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms.` };
+    }
+    if (rsi >= 70 && secondaryRsi >= 62) {
+      return { action: 'SELL', reason: `${timeframe}m RSI ${rsi.toFixed(1)} is overbought and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms.` };
+    }
+    return { action: 'HOLD', reason: `No ${timeframe}m RSI extreme with secondary-timeframe confirmation.` };
+  }
+
+  if (!indicators) return { action: 'UNAVAILABLE', reason: 'Strategy indicators are unavailable.' };
+  if (strategy === 'emaMacd') {
+    if (indicators.previousEma9 <= indicators.previousEma21 &&
+        indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal) {
+      return { action: 'BUY', reason: `EMA9 crossed above EMA21 and MACD ${indicators.macd.toFixed(4)} is above its signal ${indicators.macdSignal.toFixed(4)}.` };
+    }
+    if (indicators.previousEma9 >= indicators.previousEma21 &&
+        indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal) {
+      return { action: 'SELL', reason: `EMA9 crossed below EMA21 and MACD ${indicators.macd.toFixed(4)} is below its signal ${indicators.macdSignal.toFixed(4)}.` };
+    }
+    return { action: 'HOLD', reason: `No confirmed ${timeframe}m EMA crossover.` };
+  }
+
+  const close = result.candleCloseByTimeframe?.[key];
+  if (close <= indicators.lowerBand && rsi <= 30) {
+    return { action: 'BUY', reason: `${timeframe}m close ${close} is below the lower Bollinger Band with RSI ${rsi.toFixed(1)}.` };
+  }
+  if (close >= indicators.upperBand && rsi >= 70) {
+    return { action: 'SELL', reason: `${timeframe}m close ${close} is above the upper Bollinger Band with RSI ${rsi.toFixed(1)}.` };
+  }
+  return { action: 'HOLD', reason: `No ${timeframe}m Bollinger Band and RSI confluence.` };
+}
+
+function getTrendDirection(indicators, rsi) {
+  if (!indicators || !Number.isFinite(rsi)) return 'HOLD';
+  if (indicators.ema9 > indicators.ema21 &&
+      indicators.macd > indicators.macdSignal &&
+      rsi > 50) return 'BUY';
+  if (indicators.ema9 < indicators.ema21 &&
+      indicators.macd < indicators.macdSignal &&
+      rsi < 50) return 'SELL';
+  return 'HOLD';
+}
+
+function getTrendFollowingSignal(result) {
+  const regimeDirection = getTrendDirection(
+    result.strategyIndicatorsByTimeframe?.['45'],
+    result.rsiByTimeframe?.['45']
+  );
+  if (regimeDirection === 'HOLD') {
+    return { action: 'HOLD', reason: 'The 45m EMA/MACD/RSI do not confirm a bullish or bearish regime; wait for a directional trend.' };
+  }
+  const entryDirection = getTrendDirection(
+    result.strategyIndicatorsByTimeframe?.['15'],
+    result.rsiByTimeframe?.['15']
+  );
+  if (entryDirection !== regimeDirection) {
+    return {
+      action: 'HOLD',
+      reason: `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} 45m trend established; 15m EMA/MACD/RSI have not confirmed the matching entry.`
+    };
+  }
+  return {
+    action: regimeDirection,
+    reason: `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} 45m regime and 15m entry align: EMA9/EMA21, MACD, and RSI ${regimeDirection === 'BUY' ? '>50' : '<50'} confirm.`
+  };
+}
+
+function createRiskPlan(result, action) {
+  const entry = result.candleClose;
+  const atr = result.atr;
+  if (!Number.isFinite(entry) || !Number.isFinite(atr) || atr <= 0) return null;
+  const baseRisk = atr * 1.5;
+  const structure = action === 'BUY'
+    ? result.marketDiagnostics.support
+    : result.marketDiagnostics.resistance;
+  const structuralStop = Number.isFinite(structure)
+    ? structure + (action === 'BUY' ? -0.1 : 0.1) * atr
+    : null;
+  const structuralStopIsNearby = Number.isFinite(structuralStop) &&
+    Math.abs(entry - structuralStop) <= baseRisk * 1.25;
+  const atrStop = entry + (action === 'BUY' ? -baseRisk : baseRisk);
+  const stopLoss = structuralStopIsNearby
+    ? action === 'BUY' ? Math.min(atrStop, structuralStop) : Math.max(atrStop, structuralStop)
+    : atrStop;
+  const riskDistance = Math.abs(entry - stopLoss);
+  return {
+    entry,
+    stopLoss,
+    takeProfit: entry + (action === 'BUY' ? 2 : -2) * riskDistance,
+    riskRewardRatio: '2:1',
+    rationale: structuralStopIsNearby
+      ? `Stop refined beyond recent ${action === 'BUY' ? 'support' : 'resistance'} with a 0.1× ATR buffer; target remains 2R.`
+      : 'Stop is 1.5× ATR; no nearby support/resistance justified a refinement. Target is 2R.',
+    positionSize: null
+  };
+}
+
+function formatDiscordAlert(alert) {
+  const price = alert.market?.price;
+  const diagnostics = alert.market?.diagnostics;
+  const marketLine = alert.market
+    ? `Price ${price ?? 'unavailable'} ${alert.market.currency || ''} • ${alert.market.provider || 'no feed'} • ${alert.market.regime || 'unknown'} regime • ATR ${Number.isFinite(diagnostics?.atrPercent) ? `${diagnostics.atrPercent.toFixed(3)}%` : 'unavailable'} • Volume ${diagnostics?.volumeAvailable ? `${diagnostics.volumeRatio.toFixed(2)}× average` : 'unavailable'}`
+    : 'Market snapshot unavailable';
+  const riskLine = alert.risk
+    ? `Entry ${alert.risk.entry} • Stop ${alert.risk.stopLoss} • Target ${alert.risk.takeProfit} (2R). ${alert.risk.rationale} Position size not calculated.`
+    : 'No trade levels; do not act.';
+  const sources = alert.market?.sources?.map(source =>
+    source.error ? `${source.provider} unavailable` : source.provider
+  ).join(', ') || 'none';
+  const verification = alert.market?.sourceVerification || {};
+  const indicators = alert.market?.indicators || {};
+  const indicatorLine = `RSI 15/30/45 ${indicators.rsi15 ?? '—'}/${indicators.rsi30 ?? '—'}/${indicators.rsi45 ?? '—'} • EMA9 ${indicators.ema9 ?? '—'} • EMA21 ${indicators.ema21 ?? '—'} • MACD ${indicators.macd ?? '—'}/${indicators.macdSignal ?? '—'} • ATR ${indicators.atr ?? '—'}`;
+  return `**${alert.label} • ${alert.action} • ${alert.confidence}**\n${alert.market?.symbol || 'Market'} • ${alert.reason}\n${marketLine}\n${indicatorLine}\nSources: ${sources} • feed check ${verification.status || 'unavailable'}${verification.reason ? `: ${verification.reason}` : ''}\n${riskLine}\n${alert.timestamp}`;
+}
+
+function createDiscordMessages(alerts) {
+  const messages = [];
+  let message = '**Apexatix Pro Bot • 15-minute scan**';
+  alerts.forEach(alert => {
+    const formatted = formatDiscordAlert(alert);
+    if (message.length + formatted.length + 2 > 1800) {
+      messages.push(message);
+      message = '**Apexatix Pro Bot • 15-minute scan (continued)**';
+    }
+    message += `\n\n${formatted}`;
+  });
+  if (message.length > 0) messages.push(message);
+  return messages;
 }

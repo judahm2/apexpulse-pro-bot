@@ -40,12 +40,26 @@ export default async function handler(req, res) {
     const results = await Promise.all(symbols.map(async symbol => {
       try {
         if (!twelveDataKey) throw new Error('TWELVE_DATA_API_KEY is not configured.');
-        return await getTwelveDataResult(symbol, twelveDataKey, timeframe);
+        return await verifyMarketResult(
+          await getTwelveDataResult(symbol, twelveDataKey, timeframe),
+          { symbol, timeframe, cryptoSymbols, finnHubApiKey, oandaApiToken, oandaAccountId }
+        );
       } catch (primaryError) {
         let keylessCryptoError = null;
         if (cryptoSymbols.has(symbol)) {
           try {
-            return await getKeylessCryptoResult(symbol, timeframe);
+            return await verifyMarketResult(
+              await getKeylessCryptoResult(symbol, timeframe),
+              {
+                symbol,
+                timeframe,
+                cryptoSymbols,
+                finnHubApiKey,
+                oandaApiToken,
+                oandaAccountId,
+                failedProviders: new Set(['Twelve Data'])
+              }
+            );
           } catch (error) {
             keylessCryptoError = error;
           }
@@ -56,7 +70,21 @@ export default async function handler(req, res) {
 
         if (finnHubApiKey) {
           try {
-            return await getFinnhubResult(symbol, cryptoSymbols.has(symbol), finnHubApiKey, timeframe);
+            return await verifyMarketResult(
+              await getFinnhubResult(symbol, cryptoSymbols.has(symbol), finnHubApiKey, timeframe),
+              {
+                symbol,
+                timeframe,
+                cryptoSymbols,
+                finnHubApiKey,
+                oandaApiToken,
+                oandaAccountId,
+                failedProviders: new Set([
+                  'Twelve Data',
+                  ...(keylessCryptoError ? ['Binance', 'Coinbase'] : [])
+                ])
+              }
+            );
           } catch (fallbackError) {
             errors.push(`Finnhub: ${fallbackError.message}`);
           }
@@ -67,7 +95,18 @@ export default async function handler(req, res) {
             errors.push('OANDA: configure OANDA_API_TOKEN and OANDA_ACCOUNT_ID for the XAG/USD candle fallback.');
           } else {
             try {
-              return await getOandaResult(symbol, oandaApiToken, oandaAccountId, timeframe);
+              return await verifyMarketResult(
+                await getOandaResult(symbol, oandaApiToken, oandaAccountId, timeframe),
+                {
+                  symbol,
+                  timeframe,
+                  cryptoSymbols,
+                  finnHubApiKey,
+                  oandaApiToken,
+                  oandaAccountId,
+                  failedProviders: new Set(['Twelve Data', 'Finnhub'])
+                }
+              );
             } catch (fallbackError) {
               errors.push(`OANDA: ${fallbackError.message}`);
             }
@@ -75,7 +114,23 @@ export default async function handler(req, res) {
         }
 
         try {
-          return await getYahooFinanceResult(symbol, cryptoSymbols.has(symbol), timeframe);
+          return await verifyMarketResult(
+            await getYahooFinanceResult(symbol, cryptoSymbols.has(symbol), timeframe),
+            {
+              symbol,
+              timeframe,
+              cryptoSymbols,
+              finnHubApiKey,
+              oandaApiToken,
+              oandaAccountId,
+              failedProviders: new Set([
+                'Twelve Data',
+                ...(finnHubApiKey ? ['Finnhub'] : []),
+                ...(symbol === 'XAG/USD' && oandaApiToken && oandaAccountId ? ['OANDA'] : []),
+                ...(cryptoSymbols.has(symbol) ? ['Binance', 'Coinbase'] : [])
+              ])
+            }
+          );
         } catch (fallbackError) {
           errors.push(`Yahoo Finance: ${fallbackError.message}`);
         }
@@ -100,10 +155,103 @@ async function getKeylessCryptoResult(symbol, timeframe) {
   }
 
   try {
-    return await getCoinbaseResult(symbol, timeframe);
+    const result = await getCoinbaseResult(symbol, timeframe);
+    result.failedProviders = ['Binance'];
+    return result;
   } catch (error) {
     throw new Error(`Binance: ${binanceError.message} Coinbase: ${error.message}`);
   }
+}
+
+async function verifyMarketResult(result, {
+  symbol,
+  timeframe,
+  cryptoSymbols,
+  finnHubApiKey,
+  oandaApiToken,
+  oandaAccountId,
+  failedProviders: previouslyFailedProviders = []
+}) {
+  const isCrypto = cryptoSymbols.has(symbol);
+  const failedProviders = new Set([
+    ...(result.failedProviders || []),
+    ...previouslyFailedProviders
+  ]);
+  delete result.failedProviders;
+  let checkProvider;
+  let loadCheck;
+
+  if (isCrypto) {
+    if (result.provider === 'Binance') {
+      checkProvider = 'Coinbase';
+      if (!failedProviders.has(checkProvider)) loadCheck = () => getCoinbaseResult(symbol, timeframe);
+    } else {
+      checkProvider = 'Binance';
+      if (!failedProviders.has(checkProvider)) loadCheck = () => getBinanceResult(symbol, timeframe);
+    }
+  } else if (finnHubApiKey && result.provider !== 'Finnhub' && !failedProviders.has('Finnhub')) {
+    checkProvider = 'Finnhub';
+    loadCheck = () => getFinnhubResult(symbol, false, finnHubApiKey, timeframe);
+  } else if (
+    symbol === 'XAG/USD' &&
+    oandaApiToken &&
+    oandaAccountId &&
+    result.provider !== 'OANDA' &&
+    !failedProviders.has('OANDA')
+  ) {
+    checkProvider = 'OANDA';
+    loadCheck = () => getOandaResult(symbol, oandaApiToken, oandaAccountId, timeframe);
+  } else if (result.provider !== 'Yahoo Finance' && !failedProviders.has('Yahoo Finance')) {
+    checkProvider = 'Yahoo Finance';
+    loadCheck = () => getYahooFinanceResult(symbol, false, timeframe);
+  }
+
+  result.marketSources = [{ provider: result.provider, price: result.price, candleClosedAt: result.candleClosedAt }];
+  if (!loadCheck) {
+    result.sourceVerification = {
+      status: 'unavailable',
+      reason: 'No independent free comparison feed is available for this symbol.'
+    };
+    return result;
+  }
+
+  try {
+    const comparison = await loadCheck();
+    result.marketSources.push({
+      provider: comparison.provider,
+      price: comparison.price,
+      candleClosedAt: comparison.candleClosedAt
+    });
+    if (comparison.candleClosedAt !== result.candleClosedAt) {
+      result.sourceVerification = {
+        status: 'unaligned',
+        reason: 'The feeds do not report the same completed candle.'
+      };
+      return result;
+    }
+
+    const midpoint = (Math.abs(result.price) + Math.abs(comparison.price)) / 2;
+    const discrepancyPercent = midpoint === 0
+      ? 0
+      : (Math.abs(result.price - comparison.price) / midpoint) * 100;
+    const thresholdPercent = isCrypto ? 1 : 0.5;
+    result.sourceVerification = {
+      status: discrepancyPercent > thresholdPercent ? 'discrepancy' : 'verified',
+      discrepancyPercent,
+      thresholdPercent,
+      reason: discrepancyPercent > thresholdPercent
+        ? `${checkProvider} differs by ${discrepancyPercent.toFixed(3)}%, above the ${thresholdPercent}% limit.`
+        : null
+    };
+  } catch (error) {
+    result.marketSources.push({ provider: checkProvider, error: error.message });
+    result.sourceVerification = {
+      status: 'unavailable',
+      reason: `${checkProvider} comparison unavailable: ${error.message}`
+    };
+  }
+
+  return result;
 }
 
 async function getBinanceResult(symbol, timeframe) {
@@ -124,6 +272,7 @@ async function getBinanceResult(symbol, timeframe) {
     high: Number(candle[2]),
     low: Number(candle[3]),
     close: Number(candle[4]),
+    volume: Number(candle[5]),
     closed: Number(candle[6]) < Date.now()
   })), 'Binance', timeframe);
 }
@@ -147,7 +296,8 @@ async function getCoinbaseResult(symbol, timeframe) {
     low: Number(candle[1]),
     high: Number(candle[2]),
     open: Number(candle[3]),
-    close: Number(candle[4])
+    close: Number(candle[4]),
+    volume: Number(candle[5])
   })).reverse(), 'Coinbase', timeframe);
 }
 
@@ -175,7 +325,8 @@ async function getTwelveDataResult(symbol, apiKey, timeframe) {
         open: Number(value.open),
         high: Number(value.high),
         low: Number(value.low),
-        close: Number(value.close)
+        close: Number(value.close),
+        volume: Number(value.volume)
       })).reverse()
     };
   });
@@ -231,7 +382,8 @@ async function getFinnhubResult(symbol, isCrypto, apiKey, timeframe) {
     open: Number(data.o[index]),
     high: Number(data.h[index]),
     low: Number(data.l[index]),
-    close: Number(close)
+    close: Number(close),
+    volume: Number(data.v?.[index])
   }));
   return createMarketResult(symbol, candles, 'Finnhub', timeframe);
 }
@@ -302,7 +454,8 @@ async function getYahooFinanceResult(symbol, isCrypto, timeframe) {
     open: Number(quote.open?.[index]),
     high: Number(quote.high?.[index]),
     low: Number(quote.low?.[index]),
-    close: Number(quote.close?.[index])
+    close: Number(quote.close?.[index]),
+    volume: Number(quote.volume?.[index])
   }));
   return createMarketResult(symbol, candles, 'Yahoo Finance', timeframe, result.meta?.currency);
 }
@@ -374,6 +527,15 @@ function createMarketResult(symbol, inputCandles, provider, timeframe, currency)
   const atrByTimeframe = Object.fromEntries(
     Object.entries(candlesByTimeframe).map(([minutes, bars]) => [minutes, calculateATR(bars)])
   );
+  const diagnosticsByTimeframe = Object.fromEntries(
+    Object.entries(candlesByTimeframe).map(([minutes, bars]) => [
+      minutes,
+      calculateMarketDiagnostics(bars, atrByTimeframe[minutes], strategyIndicatorsByTimeframe[minutes])
+    ])
+  );
+  const backtestByTimeframe = Object.fromEntries(
+    Object.entries(candlesByTimeframe).map(([minutes, bars]) => [minutes, backtestStrategies(bars)])
+  );
   return {
     symbol,
     price: last.close,
@@ -393,9 +555,154 @@ function createMarketResult(symbol, inputCandles, provider, timeframe, currency)
     strategyIndicatorsByTimeframe,
     atr: atrByTimeframe[timeframe],
     atrByTimeframe,
+    marketDiagnostics: diagnosticsByTimeframe[timeframe],
+    marketDiagnosticsByTimeframe: diagnosticsByTimeframe,
+    backtestByTimeframe,
+    calibrationDate: last ? new Date((last.time + (Number(timeframe) * 60)) * 1000).toISOString() : null,
+    marketSources: [provider],
     candleClosedAt: candleClosedAtByTimeframe[timeframe],
     provider
   };
+}
+
+function calculateMarketDiagnostics(candles, atr, indicators) {
+  const latest = candles.at(-1);
+  if (!latest) return null;
+
+  const atrPercent = Number.isFinite(atr) && latest.close !== 0 ? (atr / latest.close) * 100 : null;
+  const trueRanges = candles.slice(1).map((candle, index) => Math.max(
+    candle.high - candle.low,
+    Math.abs(candle.high - candles[index].close),
+    Math.abs(candle.low - candles[index].close)
+  ));
+  const previousRanges = trueRanges.slice(-21, -1).sort((first, second) => first - second);
+  const middleRangeIndex = Math.floor(previousRanges.length / 2);
+  const medianTrueRange = previousRanges.length === 0
+    ? null
+    : previousRanges.length % 2
+      ? previousRanges[middleRangeIndex]
+      : (previousRanges[middleRangeIndex - 1] + previousRanges[middleRangeIndex]) / 2;
+  const latestTrueRange = trueRanges.at(-1) ?? null;
+  const spikeRatio = Number.isFinite(medianTrueRange) && medianTrueRange > 0
+    ? latestTrueRange / medianTrueRange
+    : null;
+  const priorVolumes = candles.slice(-21, -1)
+    .map(candle => candle.volume)
+    .filter(volume => Number.isFinite(volume) && volume >= 0);
+  const averageVolume = priorVolumes.length
+    ? priorVolumes.reduce((total, volume) => total + volume, 0) / priorVolumes.length
+    : null;
+  const volumeRatio = Number.isFinite(latest.volume) && Number.isFinite(averageVolume) && averageVolume > 0
+    ? latest.volume / averageVolume
+    : null;
+  const recentCandles = candles.slice(-21, -1);
+  const support = recentCandles.length ? Math.min(...recentCandles.map(candle => candle.low)) : null;
+  const resistance = recentCandles.length ? Math.max(...recentCandles.map(candle => candle.high)) : null;
+  const volatile = Number.isFinite(spikeRatio) && spikeRatio > 3;
+  const quiet = Number.isFinite(atrPercent) && atrPercent < 0.02;
+  const trending = indicators &&
+    ((indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal) ||
+      (indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal));
+  const trendDirection = indicators &&
+    indicators.ema9 > indicators.ema21 &&
+    indicators.macd > indicators.macdSignal
+    ? 'BULLISH'
+    : indicators &&
+      indicators.ema9 < indicators.ema21 &&
+      indicators.macd < indicators.macdSignal
+      ? 'BEARISH'
+      : 'NEUTRAL';
+
+  return {
+    regime: volatile ? 'Volatile' : quiet ? 'Quiet' : trending ? 'Trending' : 'Ranging',
+    trendDirection,
+    atrPercent,
+    minimumAtrPercent: 0.02,
+    lowVolatility: quiet,
+    latestTrueRange,
+    medianTrueRange,
+    spikeRatio,
+    erraticSpike: volatile,
+    latestVolume: Number.isFinite(latest.volume) ? latest.volume : null,
+    averageVolume,
+    volumeRatio,
+    volumeAvailable: Number.isFinite(volumeRatio),
+    lowVolume: Number.isFinite(volumeRatio) && volumeRatio < 0.5,
+    support,
+    resistance
+  };
+}
+
+function backtestStrategies(candles) {
+  const strategies = {
+    trendFollowing: { closedTrades: 0, wins: 0, losses: 0, netR: 0 },
+    rsi: { closedTrades: 0, wins: 0, losses: 0, netR: 0 },
+    emaMacd: { closedTrades: 0, wins: 0, losses: 0, netR: 0 },
+    bollingerRsi: { closedTrades: 0, wins: 0, losses: 0, netR: 0 }
+  };
+
+  for (let index = 35; index < candles.length - 1; index++) {
+    const history = candles.slice(0, index + 1);
+    const closes = history.map(candle => candle.close);
+    const rsi = calculateRSI(closes);
+    const indicators = calculateStrategyIndicators(closes);
+    const atr = calculateATR(history);
+    if (!indicators || !Number.isFinite(rsi) || !Number.isFinite(atr) || atr <= 0) continue;
+
+    const signals = {
+      trendFollowing: indicators.ema9 > indicators.ema21 &&
+        indicators.macd > indicators.macdSignal && rsi > 50
+        ? 1
+        : indicators.ema9 < indicators.ema21 &&
+          indicators.macd < indicators.macdSignal && rsi < 50 ? -1 : 0,
+      rsi: rsi <= 30 ? 1 : rsi >= 70 ? -1 : 0,
+      emaMacd: indicators.previousEma9 <= indicators.previousEma21 &&
+        indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal
+        ? 1
+        : indicators.previousEma9 >= indicators.previousEma21 &&
+          indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal ? -1 : 0,
+      bollingerRsi: closes.at(-1) <= indicators.lowerBand && rsi <= 30
+        ? 1
+        : closes.at(-1) >= indicators.upperBand && rsi >= 70 ? -1 : 0
+    };
+
+    Object.entries(signals).forEach(([strategy, direction]) => {
+      if (!direction) return;
+      const entry = candles[index].close;
+      const risk = atr * 1.5;
+      const stop = entry - (direction * risk);
+      const target = entry + (direction * risk * 2);
+      let outcome = null;
+
+      for (const candle of candles.slice(index + 1, index + 13)) {
+        const stopHit = direction > 0 ? candle.low <= stop : candle.high >= stop;
+        const targetHit = direction > 0 ? candle.high >= target : candle.low <= target;
+        if (stopHit || targetHit) {
+          outcome = targetHit && !stopHit ? 2 : -1;
+          break;
+        }
+      }
+
+      if (outcome === null) {
+        const exit = candles[Math.min(index + 12, candles.length - 1)].close;
+        outcome = (direction * (exit - entry)) / risk;
+      }
+      const stats = strategies[strategy];
+      stats.closedTrades++;
+      stats.netR += outcome;
+      if (outcome > 0) stats.wins++;
+      else stats.losses++;
+    });
+  }
+
+  return Object.fromEntries(Object.entries(strategies).map(([strategy, stats]) => [
+    strategy,
+    {
+      ...stats,
+      netR: Number(stats.netR.toFixed(3)),
+      winRatePercent: stats.closedTrades ? (stats.wins / stats.closedTrades) * 100 : null
+    }
+  ]));
 }
 
 function aggregateCandles(candles, factor) {
@@ -420,7 +727,10 @@ function aggregateCandles(candles, factor) {
       open: bucket[0].open,
       high: Math.max(...bucket.map(candle => candle.high)),
       low: Math.min(...bucket.map(candle => candle.low)),
-      close: bucket[bucket.length - 1].close
+      close: bucket[bucket.length - 1].close,
+      volume: bucket.every(candle => Number.isFinite(candle.volume))
+        ? bucket.reduce((total, candle) => total + candle.volume, 0)
+        : null
     }))
     .sort((first, second) => first.time - second.time);
 }
