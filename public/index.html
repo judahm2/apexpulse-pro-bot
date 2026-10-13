@@ -507,8 +507,8 @@
             button.setAttribute('aria-pressed', String(tradeAlertsEnabled));
             button.querySelector('[data-switch-state]').textContent = tradeAlertsEnabled ? 'On' : 'Off';
             button.title = tradeAlertsEnabled
-                ? 'Turn off browser notifications and sound for new trade setups'
-                : 'Enable browser notifications and sound for new trade setups';
+                ? 'Turn off browser notifications and sound for confirmed setups and early watches'
+                : 'Enable browser notifications and sound for confirmed setups and early watches';
             button.querySelector('[data-switch-track]').className = tradeAlertsEnabled
                 ? 'relative h-4 w-7 rounded-full bg-blue-500 transition-colors'
                 : 'relative h-4 w-7 rounded-full bg-slate-600 transition-colors';
@@ -649,6 +649,49 @@
             const isNewTradeSignal = !previous || previous.signal !== signal.raw;
             if ((!isNewClosedCandle && !isNewTradeSignal) || closedAt > Date.now() ||
                 Date.now() - closedAt > (Number(selectedTimeframe) * 60 * 1000) + (2 * 60 * 1000)) return;
+
+            if (isNewClosedCandle && !['BUY', 'SELL'].includes(signal.raw)) {
+                const upcoming = getUpcomingTradeSignal(asset, selectedTimeframe, signal);
+                if (upcoming) {
+                    const alertKey = `${key}:${closedAt}:WATCH:${upcoming.direction}`;
+                    if (!observedTradeAlertKeys.has(alertKey)) {
+                        observedTradeAlertKeys.add(alertKey);
+                        const watchAlert = {
+                            action: 'WATCH',
+                            direction: upcoming.direction,
+                            reason: upcoming.reason,
+                            confidence: 'LOW',
+                            timestamp: new Date().toISOString(),
+                            label: 'Upcoming Setup Watch',
+                            market: {
+                                symbol: asset.symbol,
+                                timeframe: `${selectedTimeframe}m`,
+                                price: asset.candleClose,
+                                currency: asset.currency,
+                                candleClosedAt: new Date(closedAt).toISOString()
+                            }
+                        };
+                        logToConsole(JSON.stringify(watchAlert), 'alert');
+                        if (tradeAlertsEnabled) {
+                            try {
+                                const direction = upcoming.direction === 'SELL' ? 'SELL / SHORT' : 'BUY';
+                                const notification = new window.Notification(
+                                    `${asset.symbol} ${direction} setup watch`,
+                                    {
+                                        body: `${upcoming.reason} Last closed price: ${asset.candleClose} ${asset.currency || ''}.`,
+                                        tag: `watch-${key}-${closedAt}`,
+                                        renotify: false
+                                    }
+                                );
+                                window.setTimeout(() => notification.close(), 10000);
+                                playTradeAlertSound(upcoming.direction);
+                            } catch (error) {
+                                logToConsole(`Upcoming setup notification failed: ${error.message || 'Notification could not be displayed.'}`, 'error');
+                            }
+                        }
+                    }
+                }
+            }
 
             const plan = getReferencePlan(asset, signal);
             const alertKey = `${key}:${closedAt}:${signal.raw}`;
@@ -899,6 +942,47 @@
             if (bullishVotes >= 2) return 'BUY';
             if (bearishVotes >= 2) return 'SELL';
             return 'HOLD';
+        }
+
+        function getUpcomingTradeSignal(asset, tf, activeSignal) {
+            if (['BUY', 'SELL'].includes(activeSignal.raw) ||
+                !getDataQuality(asset, tf).valid ||
+                getMarketFilterReason(asset, asset.marketDiagnostics)) return null;
+
+            const direction = getTrendDirection(
+                asset.strategyIndicatorsByTimeframe?.['45'],
+                asset.rsiByTimeframe?.['45']
+            );
+            if (!['BUY', 'SELL'].includes(direction)) return null;
+
+            const entryTimeframe = tf === '45' ? '15' : String(tf);
+            const indicators = asset.strategyIndicatorsByTimeframe?.[entryTimeframe];
+            const atr = asset.atrByTimeframe?.[entryTimeframe];
+            if (!indicators ||
+                ![indicators.ema9, indicators.ema21, indicators.previousEma9, indicators.previousEma21,
+                    indicators.macd, indicators.macdSignal, indicators.previousMacd, indicators.previousMacdSignal]
+                    .every(Number.isFinite) ||
+                !Number.isFinite(atr) ||
+                atr <= 0) return null;
+
+            const emaGap = indicators.ema9 - indicators.ema21;
+            const previousEmaGap = indicators.previousEma9 - indicators.previousEma21;
+            const macdGap = indicators.macd - indicators.macdSignal;
+            const previousMacdGap = indicators.previousMacd - indicators.previousMacdSignal;
+            const emaConverging = Math.abs(emaGap) <= atr * 0.5 &&
+                (direction === 'BUY'
+                    ? emaGap < 0 && emaGap > previousEmaGap
+                    : emaGap > 0 && emaGap < previousEmaGap);
+            const macdConverging = Math.abs(macdGap) <= atr * 0.25 &&
+                (direction === 'BUY'
+                    ? macdGap < 0 && macdGap > previousMacdGap
+                    : macdGap > 0 && macdGap < previousMacdGap);
+            if (!emaConverging && !macdConverging) return null;
+
+            return {
+                direction,
+                reason: `${direction === 'BUY' ? 'Bullish' : 'Bearish'} 45m trend is confirmed and ${entryTimeframe}m ${emaConverging ? 'EMA9/EMA21' : 'MACD/signal'} lines are converging toward a possible entry. This is an early WATCH, not a trade signal; wait for full confirmation.`
+            };
         }
 
         function getTrendFollowingSignal(asset, tf) {

@@ -190,12 +190,92 @@ test('Finnhub serves as fallback for all assets when Twelve Data fails', async (
   }
 });
 
-test('market-data errors name only Twelve Data and Finnhub', async () => {
+test('Yahoo Finance via yfinance serves as fallback when Twelve Data and Finnhub fail', async () => {
   const originalFetch = globalThis.fetch;
   const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
   const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalVercelUrl = process.env.VERCEL_URL;
   process.env.TWELVE_DATA_API_KEY = 'test-twelve-key';
   process.env.FINNHUB_API_KEY = 'test-finnhub-key';
+  delete process.env.VERCEL_URL;
+  const candles = createCandles();
+  const requests = [];
+  globalThis.fetch = async url => {
+    const requestUrl = new URL(url);
+    requests.push(requestUrl);
+    if (requestUrl.hostname === 'api.twelvedata.com' || requestUrl.hostname === 'finnhub.io') {
+      return new Response(JSON.stringify({ message: 'Provider unavailable.' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.pathname === '/api/yfinance') {
+      assert.equal(requestUrl.searchParams.get('symbols'), 'DOGE/USD');
+      assert.equal(requestUrl.searchParams.get('cryptoSymbols'), 'DOGE/USD');
+      return new Response(JSON.stringify({
+        results: [{
+          symbol: 'DOGE/USD',
+          currency: 'USD',
+          ticker: 'DOGE-USD',
+          candles: candles.map(({ time, open, high, low, close, volume }) => ({
+            time,
+            open,
+            high,
+            low,
+            close,
+            volume
+          }))
+        }]
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    throw new Error(`Unexpected market-data provider: ${requestUrl.hostname}`);
+  };
+
+  try {
+    const response = createResponse();
+    await handler({
+      method: 'GET',
+      headers: { host: 'localhost:3000' },
+      query: { symbols: 'DOGE/USD', cryptoSymbols: 'DOGE/USD', timeframe: '15' }
+    }, response);
+
+    const result = response.body.results[0];
+    assert.equal(response.statusCode, 200);
+    assert.equal(result.provider, 'Yahoo Finance (yfinance)');
+    assert.equal(result.sourceVerification.status, 'unavailable');
+    assert.equal(result.price, candles.at(-1).close);
+    assert.deepEqual(result.marketSources.map(source => source.provider), [
+      'Twelve Data',
+      'Finnhub',
+      'Yahoo Finance (yfinance)'
+    ]);
+    assert.deepEqual(requests.map(url => url.hostname), [
+      'api.twelvedata.com',
+      'finnhub.io',
+      'localhost'
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
+    else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
+    if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
+    else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    if (originalVercelUrl === undefined) delete process.env.VERCEL_URL;
+    else process.env.VERCEL_URL = originalVercelUrl;
+  }
+});
+
+test('market-data errors report Twelve Data, Finnhub, and yfinance failures', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalVercelUrl = process.env.VERCEL_URL;
+  process.env.TWELVE_DATA_API_KEY = 'test-twelve-key';
+  process.env.FINNHUB_API_KEY = 'test-finnhub-key';
+  delete process.env.VERCEL_URL;
   const requests = [];
   globalThis.fetch = async url => {
     const requestUrl = new URL(url);
@@ -210,19 +290,23 @@ test('market-data errors name only Twelve Data and Finnhub', async () => {
     const response = createResponse();
     await handler({
       method: 'GET',
+      headers: { host: 'localhost:3000' },
       query: { symbols: 'GBP/USD', timeframe: '15' }
     }, response);
 
     const result = response.body.results[0];
     assert.match(result.error, /Twelve Data:/);
     assert.match(result.error, /Finnhub:/);
-    assert.doesNotMatch(result.error, /Binance|Coinbase|OANDA|Yahoo|Gold API/);
-    assert.deepEqual(requests.map(url => url.hostname), ['api.twelvedata.com', 'finnhub.io']);
+    assert.match(result.error, /Yahoo Finance \(yfinance\):/);
+    assert.doesNotMatch(result.error, /Binance|Coinbase|OANDA|Gold API/);
+    assert.deepEqual(requests.map(url => url.hostname), ['api.twelvedata.com', 'finnhub.io', 'localhost']);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
     else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
     if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
     else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    if (originalVercelUrl === undefined) delete process.env.VERCEL_URL;
+    else process.env.VERCEL_URL = originalVercelUrl;
   }
 });

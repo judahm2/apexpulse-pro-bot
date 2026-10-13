@@ -60,9 +60,26 @@ export default async function handler(req, res) {
         } catch (finnhubError) {
           errors.push(`Finnhub: ${finnhubError.message}`);
         }
+      } else {
+        errors.push('Finnhub: FINNHUB_API_KEY is not configured.');
       }
 
-      if (!finnHubApiKey) errors.push('Finnhub: FINNHUB_API_KEY is not configured.');
+      try {
+        const result = await getYahooFinanceResult(symbol, cryptoSymbols.has(symbol), timeframe, req);
+        result.marketSources = [
+          { provider: 'Twelve Data', error: errors[0].replace(/^Twelve Data: /, '') },
+          { provider: 'Finnhub', error: errors[1].replace(/^Finnhub: /, '') },
+          { provider: result.provider, price: result.price, candleClosedAt: result.candleClosedAt }
+        ];
+        result.sourceVerification = {
+          status: 'unavailable',
+          reason: 'Yahoo Finance is serving as a tertiary fallback; the other feeds are unavailable, so independent comparison is unavailable.'
+        };
+        return result;
+      } catch (yahooFinanceError) {
+        errors.push(`Yahoo Finance (yfinance): ${yahooFinanceError.message}`);
+      }
+
       return { symbol, error: errors.join(' ') };
     }));
 
@@ -210,6 +227,53 @@ async function getFinnhubResult(symbol, isCrypto, apiKey, timeframe) {
     volume: Number(data.v?.[index])
   }));
   return createMarketResult(symbol, candles, 'Finnhub', timeframe);
+}
+
+async function getYahooFinanceResult(symbol, isCrypto, timeframe, req) {
+  const baseUrl = getInternalApiBaseUrl(req);
+  const url = new URL('/api/yfinance', baseUrl);
+  url.search = new URLSearchParams({
+    symbols: symbol,
+    ...(isCrypto ? { cryptoSymbols: symbol } : {})
+  }).toString();
+
+  const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  const payload = await readProviderJson(response, 'Yahoo Finance (yfinance)');
+  const result = payload.results?.find(item => item.symbol === symbol);
+  if (!result || result.error || !Array.isArray(result.candles)) {
+    throw new Error(result?.error || 'No candle data was returned for this symbol.');
+  }
+
+  return createMarketResult(
+    symbol,
+    result.candles.map(candle => ({
+      time: Number(candle.time),
+      open: Number(candle.open),
+      high: Number(candle.high),
+      low: Number(candle.low),
+      close: Number(candle.close),
+      volume: Number(candle.volume)
+    })),
+    'Yahoo Finance (yfinance)',
+    timeframe,
+    result.currency || 'USD'
+  );
+}
+
+function getInternalApiBaseUrl(req) {
+  if (process.env.VERCEL_URL) {
+    const configuredHost = process.env.VERCEL_URL.replace(/^https?:\/\//, '');
+    const protocol = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/.test(configuredHost)
+      ? 'http'
+      : 'https';
+    return `${protocol}://${configuredHost}`;
+  }
+  const host = req.headers?.host;
+  if (typeof host !== 'string' ||
+      !/^(localhost|127\.0\.0\.1)(:\d{1,5})?$/.test(host)) {
+    throw new Error('The yfinance fallback requires VERCEL_URL or a local Vercel development server.');
+  }
+  return `http://${host}`;
 }
 
 async function readProviderJson(response, provider) {
