@@ -216,14 +216,18 @@ function getRawSignal(result, strategy, timeframe) {
   return { action: 'HOLD', reason: `No ${timeframe}m Bollinger Band and RSI confluence.` };
 }
 
-function getTrendDirection(indicators, rsi) {
-  if (!indicators || !Number.isFinite(rsi)) return 'HOLD';
-  if (indicators.ema9 > indicators.ema21 &&
-      indicators.macd > indicators.macdSignal &&
-      rsi > 50) return 'BUY';
-  if (indicators.ema9 < indicators.ema21 &&
-      indicators.macd < indicators.macdSignal &&
-      rsi < 50) return 'SELL';
+export function getTrendDirection(indicators, rsi) {
+  if (!indicators ||
+      ![indicators.ema9, indicators.ema21, indicators.macd, indicators.macdSignal].every(Number.isFinite) ||
+      !Number.isFinite(rsi)) return 'HOLD';
+  const bullishVotes = Number(indicators.ema9 > indicators.ema21) +
+    Number(indicators.macd > indicators.macdSignal) +
+    Number(rsi > 50);
+  const bearishVotes = Number(indicators.ema9 < indicators.ema21) +
+    Number(indicators.macd < indicators.macdSignal) +
+    Number(rsi < 50);
+  if (bullishVotes >= 2) return 'BUY';
+  if (bearishVotes >= 2) return 'SELL';
   return 'HOLD';
 }
 
@@ -233,7 +237,7 @@ function getTrendFollowingSignal(result) {
     result.rsiByTimeframe?.['45']
   );
   if (regimeDirection === 'HOLD') {
-    return { action: 'HOLD', reason: 'The 45m EMA/MACD/RSI do not confirm a bullish or bearish regime; wait for a directional trend.' };
+    return { action: 'HOLD', reason: 'At least two of the 45m EMA9/EMA21, MACD, and RSI checks must agree on direction; wait for clearer trend alignment.' };
   }
   const entryDirection = getTrendDirection(
     result.strategyIndicatorsByTimeframe?.['15'],
@@ -247,7 +251,7 @@ function getTrendFollowingSignal(result) {
   }
   return {
     action: regimeDirection,
-    reason: `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} 45m regime and 15m entry align: EMA9/EMA21, MACD, and RSI ${regimeDirection === 'BUY' ? '>50' : '<50'} confirm.`
+    reason: `${regimeDirection === 'BUY' ? 'Bullish' : 'Bearish'} 45m regime and 15m entry align: at least two of EMA9/EMA21, MACD, and RSI confirm the direction.`
   };
 }
 

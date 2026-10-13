@@ -165,7 +165,7 @@
                 </div>
                 <div>
                     <p id="strategyDescriptionLabel" class="text-xs text-slate-400 font-medium">Trend Alignment</p>
-                    <p id="strategyDescription" class="text-lg font-bold text-blue-400">45m regime + EMA/MACD + RSI</p>
+                    <p id="strategyDescription" class="text-lg font-bold text-blue-400">2-of-3 direction + timeframe alignment</p>
                 </div>
             </div>
             <div class="bg-cardBg border border-borderCol p-5 rounded-2xl flex items-center space-x-4">
@@ -476,7 +476,7 @@
             bollingerRsi: 'Bollinger Bands + RSI'
         };
         const strategyDescriptions = {
-            trendFollowing: ['Trend Alignment', '45m regime + EMA/MACD + RSI'],
+            trendFollowing: ['Trend Alignment', '2-of-3 indicator direction + timeframe alignment'],
             trendRsi: ['Trend Pullback Confluence', 'Trend alignment + two-timeframe RSI confirmation'],
             conservativeDayTrade: ['Conservative Day-Trade Filter', 'Verified feeds + 30m/45m trend + 15m RSI reset'],
             rsi: ['Day-Trader Filter', 'Strict Confluence'],
@@ -890,12 +890,14 @@
             if (!indicators ||
                 ![indicators.ema9, indicators.ema21, indicators.macd, indicators.macdSignal].every(Number.isFinite) ||
                 !Number.isFinite(rsi)) return 'HOLD';
-            if (indicators.ema9 > indicators.ema21 &&
-                indicators.macd > indicators.macdSignal &&
-                rsi > 50) return 'BUY';
-            if (indicators.ema9 < indicators.ema21 &&
-                indicators.macd < indicators.macdSignal &&
-                rsi < 50) return 'SELL';
+            const bullishVotes = Number(indicators.ema9 > indicators.ema21) +
+                Number(indicators.macd > indicators.macdSignal) +
+                Number(rsi > 50);
+            const bearishVotes = Number(indicators.ema9 < indicators.ema21) +
+                Number(indicators.macd < indicators.macdSignal) +
+                Number(rsi < 50);
+            if (bullishVotes >= 2) return 'BUY';
+            if (bearishVotes >= 2) return 'SELL';
             return 'HOLD';
         }
 
@@ -907,7 +909,7 @@
                     'HOLD',
                     'WAITING FOR DIRECTIONAL TREND',
                     'bg-slate-800 text-slate-300 border-slate-700',
-                    'The 45m EMA9/EMA21, MACD, and RSI do not confirm a bullish or bearish regime; wait for direction before looking for entries.',
+                    'At least two of the 45m EMA9/EMA21, MACD, and RSI must agree on bullish or bearish direction; wait for clearer alignment before looking for entries.',
                     'LOW'
                 );
             }
@@ -948,7 +950,7 @@
                 action,
                 `${confidence === 'HIGH' ? 'HIGH-PROBABILITY' : 'CAUTIONARY'} ${action} THE ${direction.toUpperCase()} TREND (${entryTimeframe}m entry / 45m regime)`,
                 style,
-                `${direction[0].toUpperCase()}${direction.slice(1)} trend confirmed across the 45m regime and ${entryTimeframe}m entry; the required multi-timeframe alignment is met.`,
+                `${direction[0].toUpperCase()}${direction.slice(1)} direction confirmed by at least two of EMA9/EMA21, MACD, and RSI across the 45m regime and ${entryTimeframe}m entry; the required multi-timeframe alignment is met.`,
                 confidence
             );
         }
@@ -963,7 +965,7 @@
                     'HOLD',
                     'WAITING FOR DIRECTIONAL TREND',
                     'bg-slate-800 text-slate-300 border-slate-700',
-                    'The 45m trend is not confirmed; wait for direction before checking entry and RSI confluence.',
+                    'At least two of the 45m EMA9/EMA21, MACD, and RSI checks must agree; wait for direction before checking entry and RSI confluence.',
                     'LOW'
                 );
             }
@@ -1039,7 +1041,7 @@
                     'HOLD',
                     'WAITING FOR 30m/45m TREND ALIGNMENT',
                     'bg-slate-800 text-slate-300 border-slate-700',
-                    'The 30m and 45m EMA/MACD/RSI trends must both confirm the same bullish or bearish direction.',
+                    'At least two of the 30m and 45m EMA9/EMA21, MACD, and RSI checks must agree on the same bullish or bearish direction.',
                     'LOW'
                 );
             }
@@ -1300,6 +1302,20 @@
                         : 'text-slate-400 bg-slate-500/10';
 
                 const card = document.createElement('div');
+                const regimeDirection = getTrendDirection(
+                    asset.strategyIndicatorsByTimeframe?.['45'],
+                    asset.rsiByTimeframe?.['45']
+                );
+                const regimeLabel = regimeDirection === 'BUY'
+                    ? '45m trend: Bullish'
+                    : regimeDirection === 'SELL'
+                        ? '45m trend: Bearish'
+                        : '45m trend: Unclear';
+                const regimeStyle = regimeDirection === 'BUY'
+                    ? 'text-emerald-300'
+                    : regimeDirection === 'SELL'
+                        ? 'text-rose-300'
+                        : 'text-slate-400';
                 const alertStateKey = `${asset.symbol}:${selectedStrategy}:${selectedTimeframe}`;
                 if (!lastObservedTradeStates.has(alertStateKey) && Number.isFinite(asset.candleClosedAt)) {
                     lastObservedTradeStates.set(alertStateKey, { closedAt: asset.candleClosedAt, signal: signalObj.raw });
@@ -1327,6 +1343,7 @@
                         <div>
                             <span class="font-bold text-base ${asset.color}">${escapeHtml(asset.symbol)}</span>
                             <p class="text-xs text-slate-400">${escapeHtml(asset.name)}</p>
+                            <p class="text-[10px] font-semibold ${regimeStyle}">${regimeLabel}</p>
                         </div>
                         <span title="${marketBreak.isOnBreak ? escapeHtml(marketBreak.reason) : 'Price change'}" class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : asset.marketDataError ? 'text-rose-400 bg-rose-500/10' : changeClass}">${marketBreak.isOnBreak ? 'Market Break' : escapeHtml(asset.change)}</span>
                     </div>
