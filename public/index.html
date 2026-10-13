@@ -75,37 +75,37 @@
 <body class="bg-darkBg text-slate-100 min-h-screen flex flex-col antialiased selection:bg-blue-500 selection:text-white">
 
     <header class="border-b border-borderCol bg-cardBg/50 backdrop-blur sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div class="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 min-h-16 h-auto py-3 flex flex-col items-stretch gap-3 lg:h-16 lg:py-0 lg:flex-row lg:items-center lg:justify-between">
             <div class="flex items-center space-x-3">
                 <div class="w-10 h-10 rounded-xl flex items-center justify-center glow">
                     <img width="893" height="242" src="http://apexatix.com/wp-content/uploads/2026/09/cropped-Apexatix-favcon-edit-no-BG-300x300.png" class="aux-attachment aux-featured-image attachment-893x242 aux-attachment-id-938" alt="Apexatix-logo" data-ratio="3.69" data-original-w="893">
                 </div>
                 <div>
-                    <h1 class="font-bold text-lg tracking-tight">Apexatix Pro Bot<span class="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full ml-1">Day-Trader Confluence Filter</span></h1>
+                    <h1 class="font-bold text-base sm:text-lg tracking-tight">Apexatix Pro Bot<span class="text-[10px] sm:text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full ml-1 whitespace-nowrap"><span class="lg:hidden">Day-Trader</span><span class="hidden lg:inline">Day-Trader Confluence Filter</span></span></h1>
                     <p class="text-xs text-slate-400">Multi-Asset Engine</p>
                 </div>
             </div>
-            <div class="flex items-center space-x-2">
-                <button onclick="window.toggleTheme()" id="themeBtn" type="button" aria-label="Switch to light mode" title="Switch to light mode" class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-amber-300 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400/50 cursor-pointer">
+            <div class="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 lg:w-auto lg:flex lg:items-center lg:space-x-2">
+                <button onclick="window.toggleTheme()" id="themeBtn" type="button" aria-label="Switch to light mode" title="Switch to light mode" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-amber-300 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400/50 cursor-pointer lg:h-8 lg:w-8 lg:rounded-full">
                     <i class="fa-solid fa-sun text-xs" aria-hidden="true"></i>
                 </button>
-                <div class="hidden sm:flex items-center space-x-2 bg-slate-900 border border-borderCol px-3 py-1.5 rounded-lg text-xs text-slate-300">
+                <div class="hidden lg:flex items-center space-x-2 bg-slate-900 border border-borderCol px-3 py-1.5 rounded-lg text-xs text-slate-300">
                     <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                     <span id="selectedStrategyLabel">Strategy: Trend Following (Buy Bull / Sell Bear)</span>
                 </div>
-                <button onclick="window.triggerManualScan()" id="scanBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-lg shadow-blue-600/20 flex items-center space-x-2 cursor-pointer">
+                <button onclick="window.triggerManualScan()" id="scanBtn" class="min-w-0 justify-center bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all shadow-lg shadow-blue-600/20 flex items-center gap-2 cursor-pointer">
                     <i class="fa-solid fa-bolt text-xs"></i>
-                    <span>Run Setup Scan</span>
+                    <span class="truncate">Run Setup Scan</span>
                 </button>
-                <button onclick="window.toggleAutoScan()" id="autoScanBtn" type="button" aria-label="Automatic scanning" aria-pressed="true" title="Automatically scan for new trade setups every minute while this page is open" class="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400/50 cursor-pointer">
-                    <span>Auto-scan</span>
+                <button onclick="window.toggleAutoScan()" id="autoScanBtn" type="button" aria-label="Automatic scanning" aria-pressed="true" title="Automatically scan for new trade setups every minute while this page is open" class="inline-flex min-w-0 items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400/50 cursor-pointer lg:rounded-full lg:px-2.5 lg:py-1.5">
+                    <span class="truncate">Auto-scan</span>
                     <span data-switch-track aria-hidden="true" class="relative h-4 w-7 rounded-full bg-emerald-500 transition-colors">
                         <span data-switch-thumb class="absolute left-3 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"></span>
                     </span>
                     <span data-switch-state class="text-emerald-300">On</span>
                 </button>
-                <button onclick="window.toggleTradeAlerts()" id="tradeAlertsBtn" type="button" aria-label="Trade alerts" aria-pressed="false" title="Enable browser notifications and sound for new trade setups" class="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400/50 cursor-pointer">
-                    <span>Alerts</span>
+                <button onclick="window.toggleTradeAlerts()" id="tradeAlertsBtn" type="button" aria-label="Trade alerts" aria-pressed="false" title="Enable browser notifications and sound for new trade setups" class="inline-flex min-w-0 items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400/50 cursor-pointer lg:rounded-full lg:px-2.5 lg:py-1.5">
+                    <span class="truncate">Alerts</span>
                     <span data-switch-track aria-hidden="true" class="relative h-4 w-7 rounded-full bg-slate-600 transition-colors">
                         <span data-switch-thumb class="absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"></span>
                     </span>
@@ -115,7 +115,7 @@
         </div>
     </header>
 
-    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-6 sm:space-y-8">
 
         <section id="prioritySignals" aria-label="Priority buy and sell alerts" aria-live="polite" class="bg-cardBg border border-borderCol rounded-2xl p-4 sm:p-5">
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -193,12 +193,12 @@
         </div>
 
         <div>
-            <div class="flex items-center justify-between mb-4">
+            <div class="flex flex-col items-start gap-2 mb-4 sm:flex-row sm:items-center sm:justify-between">
                 <h2 class="text-lg font-semibold tracking-tight flex items-center space-x-2">
                     <i class="fa-solid fa-chart-line text-blue-500"></i>
                     <span>Filtered Day-Trading Signals & Markets</span>
                 </h2>
-                <span id="activeTimeframeBadge" class="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-full">Active View: 15m RSI + Confluence</span>
+                <span id="activeTimeframeBadge" class="max-w-full text-[10px] sm:text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-full">Active View: 15m RSI + Confluence</span>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6" id="assetGrid">
@@ -211,7 +211,7 @@
         </p>
 
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
-            <div class="px-6 py-4 border-b border-borderCol flex items-center justify-between bg-slate-900/50">
+            <div class="px-4 sm:px-6 py-4 border-b border-borderCol flex items-center justify-between bg-slate-900/50">
                 <div class="flex items-center space-x-2">
                     <div class="w-3 h-3 rounded-full bg-red-500/80"></div>
                     <div class="w-3 h-3 rounded-full bg-amber-500/80"></div>
@@ -220,7 +220,7 @@
                 </div>
                 <button onclick="window.clearLogs()" class="text-xs text-slate-400 hover:text-slate-200 transition-colors">Clear Logs</button>
             </div>
-            <div id="consoleLogs" class="p-6 font-mono text-xs text-slate-300 space-y-2 h-64 overflow-y-auto bg-black/40">
+            <div id="consoleLogs" class="p-4 sm:p-6 font-mono text-xs text-slate-300 space-y-2 h-64 overflow-y-auto bg-black/40 break-words">
                 <div class="text-slate-500">[System] Initializing  Serverless Function with Day-Trader Strategy...</div>
                 <div class="text-slate-500">[System] RSI setups require closed-candle extremes and secondary timeframe confirmation.</div>
                 <div class="text-emerald-400">[Bot] Scheduled Action scanner initialized successfully.</div>
@@ -1418,13 +1418,13 @@
                             : signalObj.raw === 'PAUSED'
                                 ? { label: 'MARKET PAUSED • NO TRADE', style: 'text-amber-300' }
                                 : { label: 'WAIT • NO TRADE SETUP', style: 'text-slate-300' };
-                card.className = 'relative bg-cardBg border border-borderCol p-5 rounded-2xl hover:border-slate-700 transition-all space-y-4';
+                card.className = 'relative min-w-0 bg-cardBg border border-borderCol p-4 sm:p-5 rounded-2xl hover:border-slate-700 transition-all space-y-4';
                 card.innerHTML = `
                     <button type="button" data-remove-asset="${index}" aria-label="Remove ${escapeHtml(asset.symbol)}" title="Remove asset" class="absolute top-3 right-3 w-7 h-7 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors">
                         <i class="fa-solid fa-xmark" aria-hidden="true"></i>
                     </button>
                     <div class="flex items-center justify-between pr-8">
-                        <div>
+                        <div class="min-w-0">
                             <span class="font-bold text-base ${asset.color}">${escapeHtml(asset.symbol)}</span>
                             <p class="text-xs text-slate-400">${escapeHtml(asset.name)}</p>
                             <p class="text-[10px] font-semibold ${regimeStyle}">${regimeLabel}</p>
@@ -1432,7 +1432,7 @@
                         <span title="${marketBreak.isOnBreak ? escapeHtml(marketBreak.reason) : 'Price change'}" class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : asset.marketDataError ? 'text-rose-400 bg-rose-500/10' : changeClass}">${marketBreak.isOnBreak ? 'Market Break' : escapeHtml(asset.change)}</span>
                     </div>
                     <div class="space-y-1">
-                        <div class="text-2xl font-bold tracking-tight">${Number.isFinite(asset.price) ? `${asset.currency === 'USD' || !asset.currency ? '$' : ''}${asset.price.toLocaleString(undefined, { maximumSignificantDigits: 8 })}${asset.currency && asset.currency !== 'USD' ? ` ${escapeHtml(asset.currency)}` : ''}` : '—'}</div>
+                        <div class="text-xl sm:text-2xl font-bold tracking-tight break-all">${Number.isFinite(asset.price) ? `${asset.currency === 'USD' || !asset.currency ? '$' : ''}${asset.price.toLocaleString(undefined, { maximumSignificantDigits: 8 })}${asset.currency && asset.currency !== 'USD' ? ` ${escapeHtml(asset.currency)}` : ''}` : '—'}</div>
                         <div class="space-y-1.5 pt-2 border-t border-borderCol/60">
                             <div class="flex items-center justify-between text-xs">
                                 <span class="text-slate-400">15m RSI:</span>
@@ -1452,18 +1452,18 @@
                         <div class="text-center py-1.5 px-3 rounded-xl border text-xs font-semibold ${signalObj.style}">
                             ${escapeHtml(signalObj.text)}
                         </div>
-                        <div class="mt-2 text-[10px] leading-relaxed text-slate-400">
+                        <div class="mt-2 text-[10px] leading-relaxed text-slate-400 break-words">
                             <span class="font-semibold ${signalObj.confidence === 'HIGH' ? 'text-emerald-300' : signalObj.confidence === 'MEDIUM' ? 'text-amber-300' : 'text-slate-300'}">${escapeHtml(signalObj.confidenceLabel.toUpperCase())} • ${escapeHtml(signalObj.confidence)} CONFIDENCE</span>
                             <span aria-hidden="true"> • </span>${escapeHtml(signalObj.reason)}
                         </div>
                         <section aria-label="Trade decision" class="mt-3 rounded-xl border border-borderCol bg-slate-950/50 p-3 space-y-3">
                             <h3 class="text-[10px] uppercase tracking-wider font-semibold ${decision.style}">${decision.label}</h3>
                             ${referencePlan ? `
-                                <dl class="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                                    <div><dt class="text-slate-500">Entry reference</dt><dd class="font-mono text-slate-200">${referencePlan.entry}</dd></div>
-                                    <div><dt class="text-slate-500">Stop / invalidation</dt><dd class="font-mono text-slate-200">${referencePlan.invalidation}</dd></div>
-                                    <div><dt class="text-slate-500">Target (2R)</dt><dd class="font-mono text-slate-200">${referencePlan.target}</dd></div>
-                                    <div><dt class="text-slate-500">Risk distance</dt><dd class="font-mono text-slate-200">${referencePlan.riskDistance}</dd></div>
+                                <dl class="grid grid-cols-1 min-[420px]:grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                                    <div class="min-w-0"><dt class="text-slate-500">Entry reference</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.entry}</dd></div>
+                                    <div class="min-w-0"><dt class="text-slate-500">Stop / invalidation</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.invalidation}</dd></div>
+                                    <div class="min-w-0"><dt class="text-slate-500">Target (2R)</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.target}</dd></div>
+                                    <div class="min-w-0"><dt class="text-slate-500">Risk distance</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.riskDistance}</dd></div>
                                 </dl>
                             ` : signalObj.raw === 'BUY' || signalObj.raw === 'SELL'
                                 ? '<p class="text-[10px] leading-relaxed text-amber-300">Reference stop and target levels are unavailable, so this setup has no complete trade plan.</p>'
