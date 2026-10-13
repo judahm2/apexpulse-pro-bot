@@ -1135,7 +1135,6 @@
                         : 'text-slate-400 bg-slate-500/10';
 
                 const card = document.createElement('div');
-                const dataQuality = getDataQuality(asset, selectedTimeframe);
                 const alertStateKey = `${asset.symbol}:${selectedStrategy}:${selectedTimeframe}`;
                 if (!lastObservedTradeStates.has(alertStateKey) && Number.isFinite(asset.candleClosedAt)) {
                     lastObservedTradeStates.set(alertStateKey, { closedAt: asset.candleClosedAt, signal: signalObj.raw });
@@ -1164,12 +1163,10 @@
                             <span class="font-bold text-base ${asset.color}">${escapeHtml(asset.symbol)}</span>
                             <p class="text-xs text-slate-400">${escapeHtml(asset.name)}</p>
                         </div>
-                        <span title="${escapeHtml(asset.marketDataError || (asset.dataProvider ? `${asset.dataTimeframe || selectedTimeframe}-minute change` : (!publicQuoteSymbols.has(asset.symbol) ? `${selectedTimeframe}-minute change` : 'Market change')))}" class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : asset.marketDataError ? 'text-rose-400 bg-rose-500/10' : changeClass}">${marketBreak.isOnBreak ? 'Market Break' : escapeHtml(asset.change)}</span>
+                        <span title="${marketBreak.isOnBreak ? escapeHtml(marketBreak.reason) : 'Price change'}" class="text-xs font-medium px-2.5 py-1 rounded-full ${marketBreak.isOnBreak ? 'text-amber-400 bg-amber-500/10' : asset.marketDataError ? 'text-rose-400 bg-rose-500/10' : changeClass}">${marketBreak.isOnBreak ? 'Market Break' : escapeHtml(asset.change)}</span>
                     </div>
                     <div class="space-y-1">
                         <div class="text-2xl font-bold tracking-tight">${Number.isFinite(asset.price) ? `${asset.currency === 'USD' || !asset.currency ? '$' : ''}${asset.price.toLocaleString(undefined, { maximumSignificantDigits: 8 })}${asset.currency && asset.currency !== 'USD' ? ` ${escapeHtml(asset.currency)}` : ''}` : '—'}</div>
-                        <p class="text-[10px] text-slate-500">${asset.spotOnly ? `Live spot quote${Number.isFinite(asset.quoteUpdatedAt) ? ` • ${new Date(asset.quoteUpdatedAt).toLocaleTimeString()}` : ''}` : `Last closed ${asset.dataTimeframe || '15'}m candle`}</p>
-                        <p class="text-[10px] leading-relaxed ${dataQuality.valid ? 'text-slate-500' : 'text-amber-300'}">${escapeHtml(dataQuality.label)}${Number.isFinite(asset.candleClose) ? ` • Candle close ${asset.candleClose.toLocaleString(undefined, { maximumSignificantDigits: 8 })}` : ''}</p>
                         <div class="space-y-1.5 pt-2 border-t border-borderCol/60">
                             <div class="flex items-center justify-between text-xs">
                                 <span class="text-slate-400">15m RSI:</span>
