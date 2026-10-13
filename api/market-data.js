@@ -33,6 +33,9 @@ export default async function handler(req, res) {
 
   const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
   const finnHubApiKey = process.env.FINNHUB_API_KEY;
+  const stockDataApiToken = process.env.STOCKDATA_API_TOKEN;
+  const finageApiKey = process.env.FINAGE_API_KEY;
+  const fmpApiKey = process.env.FMP_API_KEY;
 
   try {
     const results = await Promise.all(symbols.map(async symbol => {
@@ -64,23 +67,101 @@ export default async function handler(req, res) {
         errors.push('Finnhub: FINNHUB_API_KEY is not configured.');
       }
 
+      const keyedFallbacks = [];
+      if (stockDataApiToken && !cryptoSymbols.has(symbol) && !symbol.includes('/')) {
+        keyedFallbacks.push(['StockData.org', () => getStockDataResult(symbol, stockDataApiToken, timeframe)]);
+      }
+      if (finageApiKey) {
+        keyedFallbacks.push([
+          'Finage',
+          () => getFinageResult(symbol, cryptoSymbols.has(symbol), finageApiKey, timeframe)
+        ]);
+      }
+      if (fmpApiKey) {
+        keyedFallbacks.push([
+          'Financial Modeling Prep',
+          () => getFmpResult(symbol, fmpApiKey, timeframe)
+        ]);
+      }
+      for (const [provider, loadResult] of keyedFallbacks) {
+        try {
+          const result = await loadResult();
+          result.marketSources = [
+            ...errors.map(error => {
+              const separator = error.indexOf(': ');
+              return {
+                provider: separator < 0 ? error : error.slice(0, separator),
+                error: separator < 0 ? error : error.slice(separator + 2)
+              };
+            }),
+            { provider: result.provider, price: result.price, candleClosedAt: result.candleClosedAt }
+          ];
+          result.sourceVerification = {
+            status: 'unavailable',
+            reason: `${provider} is serving as a fallback; the primary feeds are unavailable, so an independent comparison is unavailable.`
+          };
+          return result;
+        } catch (providerError) {
+          errors.push(`${provider}: ${providerError.message}`);
+        }
+      }
+
+      if (cryptoSymbols.has(symbol)) {
+        const cryptoFallbacks = [
+          ['Coinbase', () => getCoinbaseResult(symbol, timeframe)],
+          ['Kraken', () => getKrakenResult(symbol, timeframe)],
+          ['Binance', () => getBinanceResult(symbol, timeframe)]
+        ];
+        for (const [provider, loadResult] of cryptoFallbacks) {
+          try {
+            const result = await loadResult();
+            result.marketSources = [
+              ...errors.map(error => {
+                const separator = error.indexOf(': ');
+                return {
+                  provider: separator < 0 ? error : error.slice(0, separator),
+                  error: separator < 0 ? error : error.slice(separator + 2)
+                };
+              }),
+              { provider: result.provider, price: result.price, candleClosedAt: result.candleClosedAt }
+            ];
+            result.sourceVerification = {
+              status: 'unavailable',
+              reason: `${provider} is serving as a crypto exchange fallback; the primary feeds are unavailable, so an independent comparison is unavailable.`
+            };
+            return result;
+          } catch (providerError) {
+            errors.push(`${provider}: ${providerError.message}`);
+          }
+        }
+      }
+
       try {
         const result = await getYahooFinanceResult(symbol, cryptoSymbols.has(symbol), timeframe, req);
         result.marketSources = [
-          { provider: 'Twelve Data', error: errors[0].replace(/^Twelve Data: /, '') },
-          { provider: 'Finnhub', error: errors[1].replace(/^Finnhub: /, '') },
+          ...errors.map(error => {
+            const separator = error.indexOf(': ');
+            return {
+              provider: separator < 0 ? error : error.slice(0, separator),
+              error: separator < 0 ? error : error.slice(separator + 2)
+            };
+          }),
           { provider: result.provider, price: result.price, candleClosedAt: result.candleClosedAt }
         ];
         result.sourceVerification = {
           status: 'unavailable',
-          reason: 'Yahoo Finance is serving as a tertiary fallback; the other feeds are unavailable, so independent comparison is unavailable.'
+          reason: 'Yahoo Finance is serving as a fallback; the other feeds are unavailable, so an independent comparison is unavailable.'
         };
         return result;
       } catch (yahooFinanceError) {
         errors.push(`Yahoo Finance (yfinance): ${yahooFinanceError.message}`);
       }
 
-      return { symbol, error: errors.join(' ') };
+      console.error(
+        `No market data found for ${symbol}; failed providers:`,
+        errors.map(error => error.slice(0, error.indexOf(': ')))
+      );
+      return { symbol, error: 'No data found due to API.' };
     }));
 
     return res.status(200).json({ results });
@@ -258,6 +339,241 @@ async function getYahooFinanceResult(symbol, isCrypto, timeframe, req) {
     timeframe,
     result.currency || 'USD'
   );
+}
+
+async function getStockDataResult(symbol, apiToken, timeframe) {
+  const url = new URL('https://api.stockdata.org/v1/data/intraday');
+  const today = new Date();
+  const dateFrom = new Date(today.getTime() - (7 * 24 * 60 * 60 * 1000));
+  url.search = new URLSearchParams({
+    symbols: symbol,
+    interval: 'minute',
+    sort: 'asc',
+    date_from: dateFrom.toISOString().slice(0, 10),
+    date_to: today.toISOString().slice(0, 10),
+    extended_hours: 'false',
+    api_token: apiToken
+  }).toString();
+  const response = await fetch(url, { signal: AbortSignal.timeout(7000) });
+  const data = await readProviderJson(response, 'StockData.org');
+  if (!Array.isArray(data.data) || data.data.length === 0) {
+    throw new Error(data.message || `No intraday stock candles were returned for ${symbol}.`);
+  }
+
+  const minuteCandles = data.data.map(item => ({
+    time: parseProviderDate(item.date),
+    open: Number(item.data?.open),
+    high: Number(item.data?.high),
+    low: Number(item.data?.low),
+    close: Number(item.data?.close),
+    volume: Number(item.data?.volume)
+  }));
+  return createMarketResult(
+    symbol,
+    aggregateMinuteCandles(minuteCandles),
+    'StockData.org',
+    timeframe,
+    'USD'
+  );
+}
+
+async function getFinageResult(symbol, isCrypto, apiKey, timeframe) {
+  const assetClass = isCrypto ? 'crypto' : symbol.includes('/') ? 'forex' : 'stock';
+  const finageSymbol = symbol.replace('/', '');
+  const { from, to } = getProviderDateRange();
+  const url = new URL(
+    `https://api.finage.co.uk/agg/${assetClass}/${encodeURIComponent(finageSymbol)}/15/minute/${from}/${to}`
+  );
+  url.search = new URLSearchParams({ apikey: apiKey }).toString();
+  const response = await fetch(url, { signal: AbortSignal.timeout(7000) });
+  const data = await readProviderJson(response, 'Finage');
+  if (!Array.isArray(data.results)) {
+    throw new Error(data.message || `No intraday candles were returned for ${finageSymbol}.`);
+  }
+  const candles = data.results.map(candle => ({
+    time: normalizeProviderTimestamp(candle.t),
+    open: Number(candle.o),
+    high: Number(candle.h),
+    low: Number(candle.l),
+    close: Number(candle.c),
+    volume: Number(candle.v)
+  }));
+  return createMarketResult(symbol, candles, 'Finage', timeframe, getSymbolCurrency(symbol));
+}
+
+async function getFmpResult(symbol, apiKey, timeframe) {
+  const { from, to } = getProviderDateRange();
+  const fmpSymbol = symbol.replace('/', '');
+  const url = new URL('https://financialmodelingprep.com/stable/historical-chart/15min');
+  url.search = new URLSearchParams({
+    symbol: fmpSymbol,
+    from,
+    to,
+    apikey: apiKey
+  }).toString();
+  const response = await fetch(url, { signal: AbortSignal.timeout(7000) });
+  const data = await readProviderJson(response, 'Financial Modeling Prep');
+  if (!Array.isArray(data) || data.length === 0) {
+    const message = data && typeof data === 'object' ? data.message || data.error : null;
+    throw new Error(message || `No intraday candles were returned for ${fmpSymbol}.`);
+  }
+  const candles = data.map(candle => ({
+    time: parseProviderDate(candle.date),
+    open: Number(candle.open),
+    high: Number(candle.high),
+    low: Number(candle.low),
+    close: Number(candle.close),
+    volume: Number(candle.volume)
+  }));
+  return createMarketResult(
+    symbol,
+    candles,
+    'Financial Modeling Prep',
+    timeframe,
+    getSymbolCurrency(symbol)
+  );
+}
+
+async function getCoinbaseResult(symbol, timeframe) {
+  const product = toExchangeProduct(symbol);
+  const url = new URL(`https://api.exchange.coinbase.com/products/${encodeURIComponent(product)}/candles`);
+  url.search = new URLSearchParams({ granularity: String(BASE_INTERVAL_SECONDS) }).toString();
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(7000)
+  });
+  const data = await readProviderJson(response, 'Coinbase');
+  if (!Array.isArray(data)) throw new Error('No public candle history was returned.');
+  const candles = data.map(candle => {
+    if (!Array.isArray(candle) || candle.length < 6) return null;
+    const [time, low, high, open, close, volume] = candle;
+    return {
+      time: Number(time),
+      open: Number(open),
+      high: Number(high),
+      low: Number(low),
+      close: Number(close),
+      volume: Number(volume)
+    };
+  }).filter(Boolean);
+  return createMarketResult(symbol, candles, 'Coinbase', timeframe, product.split('-').at(-1));
+}
+
+async function getKrakenResult(symbol, timeframe) {
+  const pair = toKrakenPair(symbol);
+  const url = new URL('https://api.kraken.com/0/public/OHLC');
+  url.search = new URLSearchParams({ pair, interval: '15' }).toString();
+  const response = await fetch(url, { signal: AbortSignal.timeout(7000) });
+  const data = await readProviderJson(response, 'Kraken');
+  if (data.error?.length) throw new Error(data.error.join('; '));
+  const resultKey = Object.keys(data.result || {}).find(key => key !== 'last');
+  const bars = resultKey ? data.result[resultKey] : null;
+  if (!Array.isArray(bars)) throw new Error(`No public candle history was returned for ${pair}.`);
+  const candles = bars.map(candle => ({
+    time: Number(candle[0]),
+    open: Number(candle[1]),
+    high: Number(candle[2]),
+    low: Number(candle[3]),
+    close: Number(candle[4]),
+    volume: Number(candle[6])
+  }));
+  return createMarketResult(symbol, candles, 'Kraken', timeframe, pair.slice(-3));
+}
+
+async function getBinanceResult(symbol, timeframe) {
+  const exchangeSymbol = toBinanceSymbol(symbol);
+  const url = new URL('https://api.binance.com/api/v3/klines');
+  url.search = new URLSearchParams({
+    symbol: exchangeSymbol,
+    interval: '15m',
+    limit: '150'
+  }).toString();
+  const response = await fetch(url, { signal: AbortSignal.timeout(7000) });
+  const data = await readProviderJson(response, 'Binance');
+  if (!Array.isArray(data)) throw new Error(data.msg || `No public candle history was returned for ${exchangeSymbol}.`);
+  const candles = data.map(candle => ({
+    time: Number(candle[0]) / 1000,
+    open: Number(candle[1]),
+    high: Number(candle[2]),
+    low: Number(candle[3]),
+    close: Number(candle[4]),
+    volume: Number(candle[5])
+  }));
+  return createMarketResult(symbol, candles, 'Binance', timeframe, 'USDT');
+}
+
+function toExchangeProduct(symbol) {
+  const parts = symbol.includes('/')
+    ? symbol.split('/')
+    : symbol.split('-');
+  if (parts.length !== 2 || parts.some(part => !/^[A-Z0-9]{2,10}$/.test(part))) {
+    throw new Error(`No Coinbase USD spot product mapping is available for ${symbol}.`);
+  }
+  return `${parts[0]}-${parts[1]}`;
+}
+
+function toKrakenPair(symbol) {
+  const [base, quote] = symbol.includes('/') ? symbol.split('/') : symbol.split('-');
+  if (!base || !quote || !/^[A-Z0-9]{2,10}$/.test(base) || !/^[A-Z0-9]{2,10}$/.test(quote)) {
+    throw new Error(`No Kraken USD spot pair mapping is available for ${symbol}.`);
+  }
+  const krakenBase = { BTC: 'XBT', DOGE: 'XDG' }[base] || base;
+  return `${krakenBase}${quote}`;
+}
+
+function toBinanceSymbol(symbol) {
+  const parts = symbol.includes('/')
+    ? symbol.split('/')
+    : symbol.split('-');
+  if (parts.length !== 2 || parts.some(part => !/^[A-Z0-9]{2,10}$/.test(part))) {
+    throw new Error(`No Binance spot symbol mapping is available for ${symbol}.`);
+  }
+  return `${parts[0]}${parts[1]}`;
+}
+
+function getProviderDateRange() {
+  const now = new Date();
+  const from = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: now.toISOString().slice(0, 10)
+  };
+}
+
+function getSymbolCurrency(symbol) {
+  return symbol.includes('/') ? symbol.split('/').at(-1) : 'USD';
+}
+
+function normalizeProviderTimestamp(timestamp) {
+  const value = Number(timestamp);
+  return value > 1e12 ? value / 1000 : value;
+}
+
+function aggregateMinuteCandles(candles) {
+  const buckets = new Map();
+  candles.forEach(candle => {
+    if (!Number.isFinite(candle.time) ||
+        ![candle.open, candle.high, candle.low, candle.close].every(Number.isFinite)) return;
+    const bucketTime = Math.floor(candle.time / BASE_INTERVAL_SECONDS) * BASE_INTERVAL_SECONDS;
+    const bucket = buckets.get(bucketTime) || [];
+    bucket.push(candle);
+    buckets.set(bucketTime, bucket);
+  });
+  return [...buckets.entries()]
+    .map(([time, bucket]) => {
+      const ordered = bucket.sort((first, second) => first.time - second.time);
+      return {
+        time,
+        open: ordered[0].open,
+        high: Math.max(...ordered.map(candle => candle.high)),
+        low: Math.min(...ordered.map(candle => candle.low)),
+        close: ordered.at(-1).close,
+        volume: ordered.every(candle => Number.isFinite(candle.volume))
+          ? ordered.reduce((total, candle) => total + candle.volume, 0)
+          : null
+      };
+    })
+    .sort((first, second) => first.time - second.time);
 }
 
 function getInternalApiBaseUrl(req) {

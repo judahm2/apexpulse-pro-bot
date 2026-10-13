@@ -296,9 +296,9 @@
                     customAssets.forEach(asset => {
                         const result = resultsBySymbol.get(asset.symbol);
                         if (!result || result.error || !Number.isFinite(result.price)) {
-                            const error = result?.error || 'No market values were returned for this symbol.';
+                            const error = result?.error || 'No data found due to API.';
                             if (asset.marketDataError !== error) {
-                                logToConsole(`[${asset.symbol}] Market data unavailable: ${error}`, 'error');
+                                logToConsole(`[${asset.symbol}] ${error}`, 'error');
                             }
                             asset.marketDataError = error;
                             asset.price = null;
@@ -764,7 +764,7 @@
          */
         function getDataQuality(asset, tf) {
             if (asset.marketDataError) {
-                return { valid: false, label: `Data unavailable • ${asset.marketDataError}` };
+                return { valid: false, label: asset.marketDataError };
             }
             if (/proxy/i.test(asset.dataProvider || '')) {
                 return { valid: false, label: 'Proxy market data • excluded from trade alerts' };

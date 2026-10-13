@@ -190,7 +190,7 @@ test('Finnhub serves as fallback for all assets when Twelve Data fails', async (
   }
 });
 
-test('Yahoo Finance via yfinance serves as fallback when Twelve Data and Finnhub fail', async () => {
+test('Yahoo Finance via yfinance serves as fallback for traditional markets when keyed feeds fail', async () => {
   const originalFetch = globalThis.fetch;
   const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
   const originalFinnhubKey = process.env.FINNHUB_API_KEY;
@@ -210,13 +210,13 @@ test('Yahoo Finance via yfinance serves as fallback when Twelve Data and Finnhub
       });
     }
     if (requestUrl.pathname === '/api/yfinance') {
-      assert.equal(requestUrl.searchParams.get('symbols'), 'DOGE/USD');
-      assert.equal(requestUrl.searchParams.get('cryptoSymbols'), 'DOGE/USD');
+      assert.equal(requestUrl.searchParams.get('symbols'), 'NZD/USD');
+      assert.equal(requestUrl.searchParams.get('cryptoSymbols'), null);
       return new Response(JSON.stringify({
         results: [{
-          symbol: 'DOGE/USD',
+          symbol: 'NZD/USD',
           currency: 'USD',
-          ticker: 'DOGE-USD',
+          ticker: 'EURUSD=X',
           candles: candles.map(({ time, open, high, low, close, volume }) => ({
             time,
             open,
@@ -239,7 +239,7 @@ test('Yahoo Finance via yfinance serves as fallback when Twelve Data and Finnhub
     await handler({
       method: 'GET',
       headers: { host: 'localhost:3000' },
-      query: { symbols: 'DOGE/USD', cryptoSymbols: 'DOGE/USD', timeframe: '15' }
+      query: { symbols: 'NZD/USD', timeframe: '15' }
     }, response);
 
     const result = response.body.results[0];
@@ -268,15 +268,22 @@ test('Yahoo Finance via yfinance serves as fallback when Twelve Data and Finnhub
   }
 });
 
-test('market-data errors report Twelve Data, Finnhub, and yfinance failures', async () => {
+test('all API failures return the concise no-data message without provider details', async () => {
   const originalFetch = globalThis.fetch;
   const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
   const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalFinageApiKey = process.env.FINAGE_API_KEY;
+  const originalFmpApiKey = process.env.FMP_API_KEY;
   const originalVercelUrl = process.env.VERCEL_URL;
+  const originalConsoleError = console.error;
   process.env.TWELVE_DATA_API_KEY = 'test-twelve-key';
   process.env.FINNHUB_API_KEY = 'test-finnhub-key';
+  process.env.FINAGE_API_KEY = 'test-finage-key';
+  process.env.FMP_API_KEY = 'test-fmp-key';
   delete process.env.VERCEL_URL;
   const requests = [];
+  const loggedErrors = [];
+  console.error = (...args) => loggedErrors.push(args);
   globalThis.fetch = async url => {
     const requestUrl = new URL(url);
     requests.push(requestUrl);
@@ -295,11 +302,283 @@ test('market-data errors report Twelve Data, Finnhub, and yfinance failures', as
     }, response);
 
     const result = response.body.results[0];
-    assert.match(result.error, /Twelve Data:/);
-    assert.match(result.error, /Finnhub:/);
-    assert.match(result.error, /Yahoo Finance \(yfinance\):/);
-    assert.doesNotMatch(result.error, /Binance|Coinbase|OANDA|Gold API/);
-    assert.deepEqual(requests.map(url => url.hostname), ['api.twelvedata.com', 'finnhub.io', 'localhost']);
+    assert.equal(result.error, 'No data found due to API.');
+    assert.doesNotMatch(JSON.stringify(result), /Access denied|test-(?:twelve|finage|fmp)-key/);
+    assert.deepEqual(requests.map(url => url.hostname), [
+      'api.twelvedata.com',
+      'finnhub.io',
+      'api.finage.co.uk',
+      'financialmodelingprep.com',
+      'localhost'
+    ]);
+    assert.equal(loggedErrors.length, 1);
+    assert.match(loggedErrors[0][0], /No market data found for GBP\/USD/);
+    assert.deepEqual(loggedErrors[0][1], [
+      'Twelve Data',
+      'Finnhub',
+      'Finage',
+      'Financial Modeling Prep',
+      'Yahoo Finance (yfinance)'
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+    if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
+    else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
+    if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
+    else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    if (originalFinageApiKey === undefined) delete process.env.FINAGE_API_KEY;
+    else process.env.FINAGE_API_KEY = originalFinageApiKey;
+    if (originalFmpApiKey === undefined) delete process.env.FMP_API_KEY;
+    else process.env.FMP_API_KEY = originalFmpApiKey;
+    if (originalVercelUrl === undefined) delete process.env.VERCEL_URL;
+    else process.env.VERCEL_URL = originalVercelUrl;
+  }
+});
+
+test('StockData, Finage, and FMP provide keyed candle fallbacks', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalStockDataToken = process.env.STOCKDATA_API_TOKEN;
+  const originalFinageApiKey = process.env.FINAGE_API_KEY;
+  const originalFmpApiKey = process.env.FMP_API_KEY;
+  process.env.TWELVE_DATA_API_KEY = 'test-twelve-key';
+  process.env.FINNHUB_API_KEY = 'test-finnhub-key';
+  process.env.STOCKDATA_API_TOKEN = 'test-stockdata-token';
+  process.env.FINAGE_API_KEY = 'test-finage-key';
+  process.env.FMP_API_KEY = 'test-fmp-key';
+  const candles = createCandles();
+  const requests = [];
+  globalThis.fetch = async url => {
+    const requestUrl = new URL(url);
+    requests.push(requestUrl);
+    if (requestUrl.hostname === 'api.twelvedata.com' || requestUrl.hostname === 'finnhub.io') {
+      return new Response(JSON.stringify({ message: 'Provider unavailable.' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'api.stockdata.org') {
+      assert.equal(requestUrl.pathname, '/v1/data/intraday');
+      assert.equal(requestUrl.searchParams.get('symbols'), 'AAPL');
+      assert.equal(requestUrl.searchParams.get('interval'), 'minute');
+      assert.equal(requestUrl.searchParams.get('api_token'), 'test-stockdata-token');
+      return new Response(JSON.stringify({
+        data: candles.map(candle => ({
+          date: new Date(candle.time * 1000).toISOString(),
+          ticker: 'AAPL',
+          data: {
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            volume: candle.volume
+          }
+        }))
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (requestUrl.hostname === 'api.finage.co.uk') {
+      assert.match(requestUrl.pathname, /\/agg\/forex\/(?:CADJPY|XAUUSD)\/15\/minute\//);
+      assert.equal(requestUrl.searchParams.get('apikey'), 'test-finage-key');
+      if (requestUrl.pathname.includes('/CADJPY/')) {
+        return new Response(JSON.stringify({
+          results: candles.map(candle => ({
+            t: candle.time * 1000,
+            o: candle.open,
+            h: candle.high,
+            l: candle.low,
+            c: candle.close,
+            v: candle.volume
+          }))
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ message: 'Plan does not include this market.' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'financialmodelingprep.com') {
+      assert.equal(requestUrl.pathname, '/stable/historical-chart/15min');
+      assert.equal(requestUrl.searchParams.get('symbol'), 'XAUUSD');
+      assert.equal(requestUrl.searchParams.get('apikey'), 'test-fmp-key');
+      return new Response(JSON.stringify(candles.map(candle => ({
+        date: new Date(candle.time * 1000).toISOString().replace('T', ' ').slice(0, 19),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume
+      }))), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    throw new Error(`Unexpected market-data provider: ${requestUrl.hostname}`);
+  };
+
+  try {
+    const response = createResponse();
+    await handler({
+      method: 'GET',
+      query: { symbols: 'AAPL,CAD/JPY,XAU/USD', timeframe: '15' }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body.results.map(result => result.provider), [
+      'StockData.org',
+      'Finage',
+      'Financial Modeling Prep'
+    ]);
+    assert.deepEqual(response.body.results.map(result => result.price), [
+      candles.at(-1).close,
+      candles.at(-1).close,
+      candles.at(-1).close
+    ]);
+    assert.deepEqual(response.body.results.map(result => result.sourceVerification.status), [
+      'unavailable',
+      'unavailable',
+      'unavailable'
+    ]);
+    assert.ok(requests.some(url => url.hostname === 'api.stockdata.org'));
+    assert.ok(requests.some(url => url.hostname === 'api.finage.co.uk' &&
+      url.pathname.includes('/CADJPY/')));
+    assert.ok(requests.some(url => url.hostname === 'api.finage.co.uk' &&
+      url.pathname.includes('/XAUUSD/')));
+    assert.ok(requests.some(url => url.hostname === 'financialmodelingprep.com'));
+    assert.doesNotMatch(JSON.stringify(response.body), /test-(?:twelve|finnhub|stockdata|finage|fmp)-key/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
+    else process.env.TWELVE_DATA_API_KEY = originalTwelveDataKey;
+    if (originalFinnhubKey === undefined) delete process.env.FINNHUB_API_KEY;
+    else process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    if (originalStockDataToken === undefined) delete process.env.STOCKDATA_API_TOKEN;
+    else process.env.STOCKDATA_API_TOKEN = originalStockDataToken;
+    if (originalFinageApiKey === undefined) delete process.env.FINAGE_API_KEY;
+    else process.env.FINAGE_API_KEY = originalFinageApiKey;
+    if (originalFmpApiKey === undefined) delete process.env.FMP_API_KEY;
+    else process.env.FMP_API_KEY = originalFmpApiKey;
+  }
+});
+
+test('free crypto exchange feeds fall back from Coinbase to Kraken to Binance', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTwelveDataKey = process.env.TWELVE_DATA_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalVercelUrl = process.env.VERCEL_URL;
+  process.env.TWELVE_DATA_API_KEY = 'test-twelve-key';
+  process.env.FINNHUB_API_KEY = 'test-finnhub-key';
+  delete process.env.VERCEL_URL;
+  const candles = createCandles();
+  const requests = [];
+  globalThis.fetch = async url => {
+    const requestUrl = new URL(url);
+    requests.push(requestUrl);
+    if (requestUrl.hostname === 'api.twelvedata.com' || requestUrl.hostname === 'finnhub.io') {
+      return new Response(JSON.stringify({ message: 'Provider unavailable.' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'api.exchange.coinbase.com') {
+      if (requestUrl.pathname.endsWith('/ADA-USD/candles')) {
+        return new Response(JSON.stringify(candles.slice().reverse().map(candle => [
+          candle.time, candle.low, candle.high, candle.open, candle.close, candle.volume
+        ])), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ message: 'Product not found.' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'api.kraken.com') {
+      if (requestUrl.searchParams.get('pair') === 'XDGUSD') {
+        return new Response(JSON.stringify({
+          error: [],
+          result: {
+            XDGUSD: candles.map(candle => [
+              candle.time, candle.open, candle.high, candle.low, candle.close,
+              candle.close, candle.volume, 20
+            ]),
+            last: 123
+          }
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ error: ['Unknown asset pair'] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (requestUrl.hostname === 'api.binance.com') {
+      const exchangeSymbol = requestUrl.searchParams.get('symbol');
+      assert.ok(['LINKUSDT', 'SOLUSD'].includes(exchangeSymbol));
+      if (exchangeSymbol === 'SOLUSD') {
+        return new Response(JSON.stringify({ msg: 'Unknown symbol.' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify(candles.map(candle => [
+        candle.time * 1000, String(candle.open), String(candle.high),
+        String(candle.low), String(candle.close), String(candle.volume)
+      ])), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (requestUrl.pathname === '/api/yfinance') {
+      assert.equal(requestUrl.searchParams.get('symbols'), 'SOL/USD');
+      assert.equal(requestUrl.searchParams.get('cryptoSymbols'), 'SOL/USD');
+      return new Response(JSON.stringify({
+        results: [{
+          symbol: 'SOL/USD',
+          currency: 'USD',
+          candles: candles.map(({ time, open, high, low, close, volume }) => ({
+            time, open, high, low, close, volume
+          }))
+        }]
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    throw new Error(`Unexpected market-data provider: ${requestUrl.hostname}`);
+  };
+
+  try {
+    const response = createResponse();
+    await handler({
+      method: 'GET',
+      headers: { host: 'localhost:3000' },
+      query: {
+        symbols: 'ADA/USD,DOGE/USD,LINK/USDT,SOL/USD',
+        cryptoSymbols: 'ADA/USD,DOGE/USD,LINK/USDT,SOL/USD',
+        timeframe: '15'
+      }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body.results.map(result => result.provider), [
+      'Coinbase',
+      'Kraken',
+      'Binance',
+      'Yahoo Finance (yfinance)'
+    ]);
+    assert.deepEqual(response.body.results.map(result => result.sourceVerification.status), [
+      'unavailable',
+      'unavailable',
+      'unavailable',
+      'unavailable'
+    ]);
+    assert.deepEqual(response.body.results.map(result => result.marketSources.at(-1).provider), [
+      'Coinbase',
+      'Kraken',
+      'Binance',
+      'Yahoo Finance (yfinance)'
+    ]);
+    assert.ok(requests.some(url => url.hostname === 'api.exchange.coinbase.com' &&
+      url.pathname.endsWith('/ADA-USD/candles')));
+    assert.ok(requests.some(url => url.hostname === 'api.kraken.com' &&
+      url.searchParams.get('pair') === 'XDGUSD'));
+    assert.ok(requests.some(url => url.hostname === 'api.binance.com' &&
+      url.searchParams.get('symbol') === 'LINKUSDT'));
+    assert.ok(requests.some(url => url.hostname === 'api.binance.com' &&
+      url.searchParams.get('symbol') === 'SOLUSD'));
+    assert.equal(requests.some(url => url.hostname === 'api.binance.com' &&
+      url.searchParams.get('symbol') === 'SOLUSDT'), false);
+    assert.equal(response.body.results[2].currency, 'USDT');
   } finally {
     globalThis.fetch = originalFetch;
     if (originalTwelveDataKey === undefined) delete process.env.TWELVE_DATA_API_KEY;
