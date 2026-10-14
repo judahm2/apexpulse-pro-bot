@@ -334,11 +334,11 @@ function createRiskPlan(result, action) {
   return {
     entry,
     stopLoss,
-    takeProfit: entry + (action === 'BUY' ? 2 : -2) * riskDistance,
-    riskRewardRatio: '2:1',
+    takeProfit: entry + (action === 'BUY' ? 3 : -3) * riskDistance,
+    riskRewardRatio: '3:1',
     rationale: structuralStopIsNearby
-      ? `Stop refined beyond recent ${action === 'BUY' ? 'support' : 'resistance'} with a 0.1× ATR buffer; target remains 2R.`
-      : 'Stop is 1.5× ATR; no nearby support/resistance justified a refinement. Target is 2R.',
+      ? `Stop refined beyond recent ${action === 'BUY' ? 'support' : 'resistance'} with a 0.1× ATR buffer; target remains 3R.`
+      : 'Stop is 1.5× ATR; no nearby support/resistance justified a refinement. Target is 3R.',
     positionSize: null
   };
 }
@@ -350,7 +350,7 @@ function formatDiscordAlert(alert) {
     ? `Price ${price ?? 'unavailable'} ${alert.market.currency || ''} • ${alert.market.provider || 'no feed'} • ${alert.market.regime || 'unknown'} regime • ATR ${Number.isFinite(diagnostics?.atrPercent) ? `${diagnostics.atrPercent.toFixed(3)}%` : 'unavailable'} • Volume ${diagnostics?.volumeAvailable ? `${diagnostics.volumeRatio.toFixed(2)}× average` : 'unavailable'}`
     : 'Market snapshot unavailable';
   const riskLine = alert.risk
-    ? `Entry ${alert.risk.entry} • Stop ${alert.risk.stopLoss} • Target ${alert.risk.takeProfit} (2R). ${alert.risk.rationale} Position size not calculated.`
+    ? `Entry ${alert.risk.entry} • Stop ${alert.risk.stopLoss} • Target ${alert.risk.takeProfit} (3R). ${alert.risk.rationale} Position size not calculated.`
     : 'No trade levels; do not act.';
   const sources = alert.market?.sources?.map(source =>
     source.error ? `${source.provider} unavailable` : source.provider

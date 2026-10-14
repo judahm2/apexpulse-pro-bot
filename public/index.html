@@ -731,7 +731,7 @@
                 `Regime: ${alert.market.regime || 'unknown'} • Feed check: ${alert.market.sourceVerification || 'unavailable'}`,
                 `RSI 15/30/45: ${Object.values(alert.market.indicators).map(value => value ?? '—').join(' / ')}`,
                 `Reason: ${signal.reason}`,
-                `Entry: ${plan.entry} • Stop: ${plan.invalidation} • 2R target: ${plan.target}`,
+                `Entry: ${plan.entry} • Stop: ${plan.invalidation} • 3R target: ${plan.target}`,
                 'Position size not calculated; apply account-specific risk limits.'
             ].join('\n');
 
@@ -778,7 +778,7 @@
                     entry: asset.candleClose,
                     stopLoss: plan.invalidationValue,
                     takeProfit: plan.targetValue,
-                    riskRewardRatio: '2:1',
+                    riskRewardRatio: '3:1',
                     positionSize: null,
                     positionSizingNote: 'Not calculated; apply account- and instrument-specific risk limits before trading.'
                 } : null
@@ -1240,7 +1240,7 @@
                 regimeDirection,
                 `HIGH-CONFLUENCE ${regimeDirection} • CONSERVATIVE PULLBACK`,
                 entryStyle,
-                `Verified feeds and available volume; 30m/45m ${regimeName} trends align, ${entryTimeframe}m EMA9 ${entryIndicatorValues.ema9.toFixed(4)} / EMA21 ${entryIndicatorValues.ema21.toFixed(4)} and MACD ${entryIndicatorValues.macd.toFixed(4)} / signal ${entryIndicatorValues.macdSignal.toFixed(4)} confirm, and 15m RSI ${pullbackRsi.toFixed(1)} is in the pullback-reset range. Reference risk remains an ATR-based stop and 2R target; no position size is calculated.`,
+                `Verified feeds and available volume; 30m/45m ${regimeName} trends align, ${entryTimeframe}m EMA9 ${entryIndicatorValues.ema9.toFixed(4)} / EMA21 ${entryIndicatorValues.ema21.toFixed(4)} and MACD ${entryIndicatorValues.macd.toFixed(4)} / signal ${entryIndicatorValues.macdSignal.toFixed(4)} confirm, and 15m RSI ${pullbackRsi.toFixed(1)} is in the pullback-reset range. Reference risk remains an ATR-based stop and 3R target; no position size is calculated.`,
                 'HIGH'
             );
         }
@@ -1362,7 +1362,7 @@
                 ? signal.raw === 'BUY' ? Math.min(atrStop, structureStop) : Math.max(atrStop, structureStop)
                 : atrStop;
             const riskDistance = Math.abs(entry - invalidation);
-            const target = signal.raw === 'BUY' ? entry + (riskDistance * 2) : entry - (riskDistance * 2);
+            const target = signal.raw === 'BUY' ? entry + (riskDistance * 3) : entry - (riskDistance * 3);
             const format = value => value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
             return {
                 entry: format(entry),
@@ -1372,8 +1372,8 @@
                 invalidationValue: invalidation,
                 targetValue: target,
                 stopRationale: structureIsNearby
-                    ? `ATR stop refined beyond recent ${signal.raw === 'BUY' ? 'support' : 'resistance'} with a 0.1× ATR buffer; target remains 2R.`
-                    : 'ATR-based stop at 1.5× ATR; no nearby support/resistance level justified a refinement. Target is 2R.'
+                    ? `ATR stop refined beyond recent ${signal.raw === 'BUY' ? 'support' : 'resistance'} with a 0.1× ATR buffer; target remains 3R.`
+                    : 'ATR-based stop at 1.5× ATR; no nearby support/resistance level justified a refinement. Target is 3R.'
             };
         }
 
@@ -1532,7 +1532,7 @@
                                 <dl class="grid grid-cols-1 min-[420px]:grid-cols-2 gap-x-3 gap-y-2 text-xs">
                                     <div class="min-w-0"><dt class="text-slate-500">Entry reference</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.entry}</dd></div>
                                     <div class="min-w-0"><dt class="text-slate-500">Stop / invalidation</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.invalidation}</dd></div>
-                                    <div class="min-w-0"><dt class="text-slate-500">Target (2R)</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.target}</dd></div>
+                                    <div class="min-w-0"><dt class="text-slate-500">Target (3R)</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.target}</dd></div>
                                     <div class="min-w-0"><dt class="text-slate-500">Risk distance</dt><dd class="font-mono text-slate-200 break-all">${referencePlan.riskDistance}</dd></div>
                                 </dl>
                             ` : signalObj.raw === 'BUY' || signalObj.raw === 'SELL'
@@ -1698,7 +1698,7 @@
                     .join(' / ');
                 addAlertLine('RSI 15/30/45', rsi);
                 if (alert.risk) {
-                    addAlertLine('Plan', `Entry ${risk.entry ?? '—'} • Stop ${risk.stopLoss ?? '—'} • Target ${risk.takeProfit ?? '—'} (${risk.riskRewardRatio || '2:1'})`);
+                    addAlertLine('Plan', `Entry ${risk.entry ?? '—'} • Stop ${risk.stopLoss ?? '—'} • Target ${risk.takeProfit ?? '—'} (${risk.riskRewardRatio || '3:1'})`);
                     addAlertLine('Risk note', risk.positionSizingNote || 'Position size not calculated; apply account- and instrument-specific risk limits.');
                 }
 
@@ -1874,10 +1874,10 @@
                             logToConsole(`[${asset.symbol}] Scan skipped: ${getDataQuality(asset, scanTimeframe).label}.`, 'alert');
                         } else if (sig.raw === 'BUY') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Trade guidance: BUY (${scanTimeframe}m, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Reference levels unavailable; do not act on this setup.'}`, 'success');
+                            logToConsole(`[${asset.symbol}] Trade guidance: BUY (${scanTimeframe}m, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 3R target ${plan.target}.` : 'Reference levels unavailable; do not act on this setup.'}`, 'success');
                         } else if (sig.raw === 'SELL') {
                             const plan = getReferencePlan(asset, sig);
-                            logToConsole(`[${asset.symbol}] Trade guidance: SELL / SHORT (${scanTimeframe}m, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 2R target ${plan.target}.` : 'Reference levels unavailable; do not act on this setup.'}`, 'alert');
+                            logToConsole(`[${asset.symbol}] Trade guidance: SELL / SHORT (${scanTimeframe}m, candle closed ${new Date(asset.candleClosedAt).toLocaleString()}). ${plan ? `Decision plan: entry ${plan.entry}, invalidation ${plan.invalidation}, 3R target ${plan.target}.` : 'Reference levels unavailable; do not act on this setup.'}`, 'alert');
                         } else {
                             noSetupSymbols.push(asset.symbol);
                         }

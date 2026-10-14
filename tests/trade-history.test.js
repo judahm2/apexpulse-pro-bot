@@ -22,7 +22,7 @@ function createAlert(action, signalTime = Date.parse('2026-10-14T18:00:00.000Z')
     risk: {
       entry: 100,
       stopLoss: action === 'BUY' ? 99 : 101,
-      takeProfit: action === 'BUY' ? 102 : 98
+      takeProfit: action === 'BUY' ? 103 : 97
     }
   };
 }
@@ -80,7 +80,7 @@ test('trade history conservatively counts same-candle stop and target touches as
     candleClose: 100,
     recentClosedCandles: [
       createCandle(signalTime, { high: 100.5, low: 99.5, close: 100 }),
-      createCandle(signalTime + candleDuration, { high: 102.2, low: 98.8, close: 101 })
+      createCandle(signalTime + candleDuration, { high: 103.2, low: 98.8, close: 101 })
     ]
   };
 
@@ -91,7 +91,7 @@ test('trade history conservatively counts same-candle stop and target touches as
   assert.equal(events[0].status, 'CLOSED');
   assert.equal(events[0].outcome, 'STOP');
   assert.equal(events[0].outcomeR, -1);
-  assert.ok(Math.abs(events[0].maxFavorableR - 2.2) < 1e-10);
+  assert.ok(Math.abs(events[0].maxFavorableR - 3.2) < 1e-10);
   assert.ok(Math.abs(events[0].maxAdverseR - 1.2) < 1e-10);
 
   const summary = summarizeTradeEvents(events);

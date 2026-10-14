@@ -922,7 +922,7 @@ export function backtestStrategies(candles) {
       const entry = candles[index].close;
       const risk = atr * 1.5;
       const stop = entry - (direction * risk);
-      const target = entry + (direction * risk * 2);
+      const target = entry + (direction * risk * 3);
       let outcome = null;
 
       for (const candle of candles.slice(index + 1, index + 13)) {
