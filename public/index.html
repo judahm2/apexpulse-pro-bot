@@ -683,6 +683,7 @@
 
             const direction = signal.raw === 'SELL' ? 'SELL / SHORT' : 'BUY';
             const body = [
+                `${strategyNames[selectedStrategy]} strategy`,
                 `${signal.confidenceLabel.toUpperCase()} • ${direction} • ${signal.confidence} confidence`,
                 `${asset.symbol} • ${selectedTimeframe}m • ${alert.market.price} ${alert.market.currency}`,
                 `Regime: ${alert.market.regime || 'unknown'} • Feed check: ${alert.market.sourceVerification || 'unavailable'}`,
@@ -713,6 +714,8 @@
             const closedAt = new Date(asset.candleClosedAt).toISOString();
             return {
                 action: signal.raw,
+                strategy: selectedStrategy,
+                strategyName: strategyNames[selectedStrategy],
                 reason: signal.reason,
                 confidence: signal.confidence,
                 timestamp: new Date().toISOString(),
@@ -1602,6 +1605,7 @@
                 const market = alert.market || {};
                 const indicators = market.indicators || {};
                 const risk = alert.risk || {};
+                if (alert.strategyName) addAlertLine('Strategy', alert.strategyName);
                 addAlertLine('Reason', alert.reason);
                 addAlertLine('Market', `${market.timeframe || '—'} • ${market.price ?? '—'} ${market.currency || ''}`.trim());
                 addAlertLine('Regime / feed', `${market.regime || 'unknown'} • ${market.sourceVerification || 'unavailable'}`);
@@ -1677,7 +1681,8 @@
             const conditionRows = [
                 ['By regime', history.byRegime || []],
                 ['By confidence', history.byConfidence || []],
-                ['By action', history.byAction || []]
+                ['By action', history.byAction || []],
+                ['By strategy', history.byStrategy || []]
             ];
             conditionRows.forEach(([label, conditionGroups]) => {
                 if (!conditionGroups.length) return;

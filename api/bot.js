@@ -2,6 +2,15 @@ import marketDataHandler from './market-data.js';
 import { getSharedRedis } from '../lib/redis.js';
 import { recordTradeHistory } from '../lib/trade-history.js';
 
+const STRATEGIES = {
+  trendFollowing: 'Trend Following',
+  trendRsi: 'Trend + Dual-TF RSI Confluence',
+  conservativeDayTrade: 'Conservative Day-Trade Pullback',
+  rsi: 'Dual-TF RSI Confluence',
+  emaMacd: 'EMA Crossover + MACD',
+  bollingerRsi: 'Bollinger Bands + RSI'
+};
+
 export default async function handler(req, res) {
   const authHeader = req.headers.authorization;
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -26,7 +35,9 @@ export default async function handler(req, res) {
 
     const results = marketResponse.body.results;
     const timestamp = new Date().toISOString();
-    const alerts = results.map(result => createAlert(result, timestamp));
+    const alerts = results.flatMap(result =>
+      Object.keys(STRATEGIES).map(strategy => createAlert(result, timestamp, strategy))
+    );
     let history;
     try {
       const redis = getSharedRedis();
@@ -76,10 +87,15 @@ function createInternalResponse() {
   };
 }
 
-function createAlert(result, timestamp) {
+export function createAlert(result, timestamp, strategy = 'trendFollowing') {
+  const strategyName = STRATEGIES[strategy];
+  if (!strategyName) throw new Error(`Unsupported strategy: ${strategy}`);
+
   if (result.error || !Number.isFinite(result.price)) {
     return {
       action: 'HOLD',
+      strategy,
+      strategyName,
       confidence: 'LOW',
       label: 'Cautionary Signal',
       reason: result.error || 'No valid market price was returned.',
@@ -111,13 +127,15 @@ function createAlert(result, timestamp) {
     }
   };
   const filterReason = getFilterReason(result, diagnostics);
-  const active = getTrendFollowingSignal(result);
+  const active = getStrategySignal(result, strategy);
   if (filterReason) {
-    return { action: 'HOLD', confidence: 'LOW', label: 'Cautionary Signal', reason: filterReason, timestamp, market, risk: null };
+    return { action: 'HOLD', strategy, strategyName, confidence: 'LOW', label: 'Cautionary Signal', reason: filterReason, timestamp, market, risk: null };
   }
   if (!['BUY', 'SELL'].includes(active.action)) {
     return {
       action: 'HOLD',
+      strategy,
+      strategyName,
       confidence: 'LOW',
       label: 'Cautionary Signal',
       reason: `${active.reason} Regime: ${diagnostics.regime}.`,
@@ -127,35 +145,100 @@ function createAlert(result, timestamp) {
     };
   }
 
-  const alignedTimeframes = [15, 30, 45]
-    .map(timeframe => getTrendDirection(
-      result.strategyIndicatorsByTimeframe?.[String(timeframe)],
-      result.rsiByTimeframe?.[String(timeframe)]
-    ))
-    .filter(direction => direction === active.action).length;
-  const compositeScore = alignedTimeframes / 3;
-  if (alignedTimeframes < 2 || compositeScore < 0.65) {
-    return {
-      action: 'HOLD',
-      confidence: 'LOW',
-      label: 'Cautionary Signal',
-      reason: `${active.reason} Trend score ${compositeScore.toFixed(2)} is below the 0.65 threshold; only ${alignedTimeframes}/3 timeframes align.`,
-      timestamp,
-      market,
-      risk: null
-    };
+  let confidence;
+  let confluenceReason;
+  if (strategy === 'trendFollowing') {
+    const alignedTimeframes = ['15', '30', '45']
+      .filter(timeframe => getTrendDirection(
+        result.strategyIndicatorsByTimeframe?.[timeframe],
+        result.rsiByTimeframe?.[timeframe]
+      ) === active.action).length;
+    if (alignedTimeframes < 2) {
+      return holdAlert(strategy, strategyName, active, timestamp, market,
+        `Only ${alignedTimeframes}/3 timeframes align; at least two are required.`);
+    }
+    confidence = alignedTimeframes === 3 &&
+      result.sourceVerification?.status === 'verified' &&
+      diagnostics.volumeAvailable
+      ? 'HIGH'
+      : 'MEDIUM';
+    confluenceReason = `${alignedTimeframes}/3 trend timeframes align.`;
+  } else if (strategy === 'trendRsi' || strategy === 'conservativeDayTrade') {
+    const regimeDirection = getTrendDirection(
+      result.strategyIndicatorsByTimeframe?.['45'],
+      result.rsiByTimeframe?.['45']
+    );
+    const confirmationDirection = getTrendDirection(
+      result.strategyIndicatorsByTimeframe?.['30'],
+      result.rsiByTimeframe?.['30']
+    );
+    if (regimeDirection !== active.action || confirmationDirection !== active.action) {
+      return holdAlert(strategy, strategyName, active, timestamp, market,
+        '30m and 45m trend directions must both align with the entry.');
+    }
+    if (strategy === 'conservativeDayTrade' &&
+        (result.sourceVerification?.status !== 'verified' || !diagnostics.volumeAvailable)) {
+      return holdAlert(strategy, strategyName, active, timestamp, market,
+        'Verified market feeds and available volume are required.');
+    }
+    confidence = result.sourceVerification?.status === 'verified' &&
+      diagnostics.volumeAvailable
+      ? 'HIGH'
+      : 'MEDIUM';
+    confluenceReason = '30m/45m trend alignment and strategy-specific entry conditions confirmed.';
+  } else {
+    const trendTimeframes = ['15', '30', '45'].map(timeframe => getTrendDirection(
+      result.strategyIndicatorsByTimeframe?.[timeframe],
+      result.rsiByTimeframe?.[timeframe]
+    ));
+    const alignedTrendTimeframes = trendTimeframes.filter(direction => direction === active.action).length;
+    if (alignedTrendTimeframes < 2 || trendTimeframes[2] !== active.action) {
+      return holdAlert(strategy, strategyName, active, timestamp, market,
+        `Only ${alignedTrendTimeframes}/3 trend timeframes align; the 45m regime and at least two timeframes must agree.`);
+    }
+    if (result.sourceVerification?.status === 'discrepancy') {
+      return holdAlert(strategy, strategyName, active, timestamp, market, 'Market feeds disagree.');
+    }
+
+    const weights = diagnostics.regime === 'Trending'
+      ? { rsi: 0.3, emaMacd: 0.5, bollingerRsi: 0.2 }
+      : { rsi: 0.35, emaMacd: 0.15, bollingerRsi: 0.5 };
+    const strategyVotes = Object.fromEntries(
+      ['rsi', 'emaMacd', 'bollingerRsi'].map(name => [
+        name,
+        getRawSignal(result, name, 15).action
+      ])
+    );
+    const strategyScore = Object.entries(strategyVotes).reduce((score, [name, vote]) =>
+      score + (vote === active.action ? weights[name] :
+        ['HOLD', 'UNAVAILABLE'].includes(vote) ? 0 : -weights[name]), 0);
+    const timeframeVotes = ['30', '45'].map(timeframe =>
+      getRawSignal(result, strategy, Number(timeframe)).action
+    );
+    const alignedTimeframes = timeframeVotes.filter(vote => vote === active.action).length;
+    const opposingTimeframes = timeframeVotes.filter(vote =>
+      ['BUY', 'SELL'].includes(vote) && vote !== active.action).length;
+    const compositeScore = strategyScore + (0.25 * (alignedTimeframes - opposingTimeframes));
+    if (compositeScore < 0.45) {
+      return holdAlert(strategy, strategyName, active, timestamp, market,
+        'Indicator signals conflict or lack sufficient confluence.');
+    }
+    confidence = alignedTimeframes > 0 &&
+      alignedTrendTimeframes === 3 &&
+      Math.abs(strategyScore) >= 0.5 &&
+      result.sourceVerification?.status === 'verified' &&
+      diagnostics.volumeAvailable
+      ? 'HIGH'
+      : 'MEDIUM';
+    confluenceReason = `Indicator confluence ${compositeScore.toFixed(2)}; ${alignedTrendTimeframes}/3 trend timeframes align.`;
   }
 
-  const confidence = alignedTimeframes > 0 &&
-    alignedTimeframes === 3 &&
-    result.sourceVerification?.status === 'verified' &&
-    diagnostics.volumeAvailable
-    ? 'HIGH'
-    : 'MEDIUM';
   const risk = createRiskPlan(result, active.action);
   if (!risk) {
     return {
       action: 'HOLD',
+      strategy,
+      strategyName,
       confidence: 'LOW',
       label: 'Cautionary Signal',
       reason: `${active.reason} ATR-based stop and target are unavailable, so the setup is incomplete.`,
@@ -166,12 +249,28 @@ function createAlert(result, timestamp) {
   }
   return {
     action: active.action,
+    strategy,
+    strategyName,
     confidence,
     label: confidence === 'HIGH' ? 'High-Confluence Setup' : 'Cautionary Signal',
-    reason: `${active.reason} Regime: ${diagnostics.regime}. Trend score ${compositeScore.toFixed(2)} (threshold 0.65); ${alignedTimeframes}/3 timeframes align.`,
+    reason: `${active.reason} Regime: ${diagnostics.regime}. ${confluenceReason}`,
     timestamp,
     market,
     risk
+  };
+}
+
+function holdAlert(strategy, strategyName, active, timestamp, market, reason) {
+  return {
+    action: 'HOLD',
+    strategy,
+    strategyName,
+    confidence: 'LOW',
+    label: 'Cautionary Signal',
+    reason: `${active.reason} ${reason}`,
+    timestamp,
+    market,
+    risk: null
   };
 }
 
@@ -191,20 +290,21 @@ function getFilterReason(result, diagnostics) {
 function getRawSignal(result, strategy, timeframe) {
   const key = String(timeframe);
   const rsi = result.rsiByTimeframe?.[key];
+  const previousRsi = result.previousRsiByTimeframe?.[key];
   const indicators = result.strategyIndicatorsByTimeframe?.[key];
   if (strategy === 'rsi') {
     const secondaryTimeframe = timeframe === 30 ? '45' : '30';
     const secondaryRsi = result.rsiByTimeframe?.[secondaryTimeframe];
-    if (!Number.isFinite(rsi) || !Number.isFinite(secondaryRsi)) {
+    if (!Number.isFinite(rsi) || !Number.isFinite(previousRsi) || !Number.isFinite(secondaryRsi)) {
       return { action: 'UNAVAILABLE', reason: 'RSI history is insufficient for multi-timeframe confirmation.' };
     }
-    if (rsi <= 30 && secondaryRsi <= 38) {
-      return { action: 'BUY', reason: `${timeframe}m RSI ${rsi.toFixed(1)} is oversold and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms.` };
+    if (rsi <= 30 && secondaryRsi <= 38 && rsi > previousRsi) {
+      return { action: 'BUY', reason: `${timeframe}m RSI ${rsi.toFixed(1)} is oversold and turning up; ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms.` };
     }
-    if (rsi >= 70 && secondaryRsi >= 62) {
-      return { action: 'SELL', reason: `${timeframe}m RSI ${rsi.toFixed(1)} is overbought and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms.` };
+    if (rsi >= 70 && secondaryRsi >= 62 && rsi < previousRsi) {
+      return { action: 'SELL', reason: `${timeframe}m RSI ${rsi.toFixed(1)} is overbought and turning down; ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms.` };
     }
-    return { action: 'HOLD', reason: `No ${timeframe}m RSI extreme with secondary-timeframe confirmation.` };
+    return { action: 'HOLD', reason: `No ${timeframe}m RSI reversal with secondary-timeframe confirmation.` };
   }
 
   if (!indicators) return { action: 'UNAVAILABLE', reason: 'Strategy indicators are unavailable.' };
@@ -221,13 +321,76 @@ function getRawSignal(result, strategy, timeframe) {
   }
 
   const close = result.candleCloseByTimeframe?.[key];
-  if (close <= indicators.lowerBand && rsi <= 30) {
-    return { action: 'BUY', reason: `${timeframe}m close ${close} is below the lower Bollinger Band with RSI ${rsi.toFixed(1)}.` };
+  const open = result.candleOpenByTimeframe?.[key];
+  if (Number.isFinite(close) && Number.isFinite(open) && Number.isFinite(rsi) &&
+      Number.isFinite(previousRsi) && Number.isFinite(indicators.lowerBand) &&
+      close <= indicators.lowerBand && rsi <= 30 && rsi > previousRsi && close > open) {
+    return { action: 'BUY', reason: `${timeframe}m close ${close} is below the lower Bollinger Band with RSI turning up and a bullish reversal candle.` };
   }
-  if (close >= indicators.upperBand && rsi >= 70) {
-    return { action: 'SELL', reason: `${timeframe}m close ${close} is above the upper Bollinger Band with RSI ${rsi.toFixed(1)}.` };
+  if (Number.isFinite(close) && Number.isFinite(open) && Number.isFinite(rsi) &&
+      Number.isFinite(previousRsi) && Number.isFinite(indicators.upperBand) &&
+      close >= indicators.upperBand && rsi >= 70 && rsi < previousRsi && close < open) {
+    return { action: 'SELL', reason: `${timeframe}m close ${close} is above the upper Bollinger Band with RSI turning down and a bearish reversal candle.` };
   }
-  return { action: 'HOLD', reason: `No ${timeframe}m Bollinger Band and RSI confluence.` };
+  return { action: 'HOLD', reason: `No ${timeframe}m Bollinger Band and RSI reversal confluence.` };
+}
+
+function getStrategySignal(result, strategy) {
+  if (strategy === 'trendFollowing') return getTrendFollowingSignal(result);
+
+  const regimeDirection = getTrendDirection(
+    result.strategyIndicatorsByTimeframe?.['45'],
+    result.rsiByTimeframe?.['45']
+  );
+  if (strategy === 'trendRsi' || strategy === 'conservativeDayTrade') {
+    const confirmationDirection = getTrendDirection(
+      result.strategyIndicatorsByTimeframe?.['30'],
+      result.rsiByTimeframe?.['30']
+    );
+    const entryDirection = getTrendEntryDirection(result.strategyIndicatorsByTimeframe?.['15']);
+    if (!['BUY', 'SELL'].includes(regimeDirection) || confirmationDirection !== regimeDirection) {
+      return { action: 'HOLD', reason: '30m/45m trend alignment is not confirmed.' };
+    }
+    if (entryDirection !== regimeDirection) {
+      return { action: 'HOLD', reason: '15m EMA/MACD do not confirm the trend direction.' };
+    }
+
+    const rsi = result.rsiByTimeframe?.['15'];
+    const previousRsi = result.previousRsiByTimeframe?.['15'];
+    if (strategy === 'trendRsi') {
+      const rsiSignal = getRawSignal(result, 'rsi', 15);
+      if (rsiSignal.action !== regimeDirection) {
+        return { action: 'HOLD', reason: '15m/30m RSI have not confirmed a pullback reversal in the trend direction.' };
+      }
+      return { action: regimeDirection, reason: `45m trend and 15m EMA/MACD align; ${rsiSignal.reason}` };
+    }
+
+    const pullbackConfirmed = Number.isFinite(rsi) && Number.isFinite(previousRsi) &&
+      (regimeDirection === 'BUY'
+        ? rsi >= 40 && rsi < 50 && rsi > previousRsi
+        : rsi > 50 && rsi <= 60 && rsi < previousRsi);
+    if (!pullbackConfirmed) {
+      return { action: 'HOLD', reason: '15m RSI has not reset and turned back toward the trend.' };
+    }
+    return { action: regimeDirection, reason: `30m/45m trend and 15m EMA/MACD align; 15m RSI ${rsi.toFixed(1)} confirms the trend pullback.` };
+  }
+
+  const active = getRawSignal(result, strategy, 15);
+  if (!['BUY', 'SELL'].includes(active.action)) return active;
+  if (regimeDirection !== active.action) {
+    return { action: 'HOLD', reason: `The ${active.action} setup does not align with the 45m trend.` };
+  }
+  return active;
+}
+
+function getTrendEntryDirection(indicators) {
+  if (!indicators ||
+      ![indicators.ema9, indicators.ema21, indicators.macd, indicators.macdSignal].every(Number.isFinite)) {
+    return 'HOLD';
+  }
+  if (indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal) return 'BUY';
+  if (indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal) return 'SELL';
+  return 'HOLD';
 }
 
 export function getTrendDirection(indicators, rsi) {
@@ -314,7 +477,7 @@ function formatDiscordAlert(alert) {
   const verification = alert.market?.sourceVerification || {};
   const indicators = alert.market?.indicators || {};
   const indicatorLine = `RSI 15/30/45 ${indicators.rsi15 ?? '—'}/${indicators.rsi30 ?? '—'}/${indicators.rsi45 ?? '—'} • EMA9 ${indicators.ema9 ?? '—'} • EMA21 ${indicators.ema21 ?? '—'} • MACD ${indicators.macd ?? '—'}/${indicators.macdSignal ?? '—'} • ATR ${indicators.atr ?? '—'}`;
-  return `**${alert.label} • ${alert.action} • ${alert.confidence}**\n${alert.market?.symbol || 'Market'} • ${alert.reason}\n${marketLine}\n${indicatorLine}\nSources: ${sources} • feed check ${verification.status || 'unavailable'}${verification.reason ? `: ${verification.reason}` : ''}\n${riskLine}\n${alert.timestamp}`;
+  return `**${alert.strategyName || 'Trade Strategy'} • ${alert.label} • ${alert.action} • ${alert.confidence}**\n${alert.market?.symbol || 'Market'} • ${alert.reason}\n${marketLine}\n${indicatorLine}\nSources: ${sources} • feed check ${verification.status || 'unavailable'}${verification.reason ? `: ${verification.reason}` : ''}\n${riskLine}\n${alert.timestamp}`;
 }
 
 export function createDiscordMessages(alerts) {

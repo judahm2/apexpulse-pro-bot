@@ -161,6 +161,24 @@ test('trade history deduplicates a repeated signal when no new candle has closed
   assert.equal(second.changed, false);
 });
 
+test('trade history keeps same-direction signals separate by strategy', () => {
+  const trendAlert = { ...createAlert('BUY'), strategy: 'trendFollowing', strategyName: 'Trend Following' };
+  const rsiAlert = { ...createAlert('BUY'), strategy: 'rsi', strategyName: 'Dual-TF RSI Confluence' };
+  const signalTime = Date.parse(trendAlert.market.candleClosedAt);
+  const result = {
+    symbol: 'AUD/USD',
+    candleClose: 100,
+    recentClosedCandles: [
+      createCandle(signalTime, { high: 100.5, low: 99.5, close: 100 })
+    ]
+  };
+
+  const { events } = advanceTradeEvents([], [trendAlert, rsiAlert], [result], signalTime);
+
+  assert.equal(events.length, 2);
+  assert.deepEqual(events.map(event => event.strategy).sort(), ['Dual-TF RSI Confluence', 'Trend Following']);
+});
+
 test('trade history is persisted once and the rolling summary can be read back', async () => {
   const values = new Map();
   const redis = {
