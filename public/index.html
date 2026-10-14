@@ -318,7 +318,9 @@
                             asset.rsi30 = null;
                             asset.rsi45 = null;
                             asset.rsiByTimeframe = null;
+                            asset.previousRsiByTimeframe = null;
                             asset.candleCloseByTimeframe = null;
+                            asset.candleOpenByTimeframe = null;
                             asset.candleClosedAtByTimeframe = null;
                             asset.strategyRsi = null;
                             asset.strategyIndicators = null;
@@ -353,7 +355,9 @@
                             30: result.rsi30,
                             45: result.rsi45
                         };
+                        asset.previousRsiByTimeframe = result.previousRsiByTimeframe || null;
                         asset.candleCloseByTimeframe = result.candleCloseByTimeframe || { 15: result.candleClose };
+                        asset.candleOpenByTimeframe = result.candleOpenByTimeframe || null;
                         asset.candleClosedAtByTimeframe = result.candleClosedAtByTimeframe || { 15: result.candleClosedAt };
                         asset.strategyIndicatorsByTimeframe = result.strategyIndicatorsByTimeframe || {
                             15: result.strategyIndicators
@@ -388,7 +392,9 @@
                         asset.rsi30 = null;
                         asset.rsi45 = null;
                         asset.rsiByTimeframe = null;
+                        asset.previousRsiByTimeframe = null;
                         asset.candleCloseByTimeframe = null;
+                        asset.candleOpenByTimeframe = null;
                         asset.candleClosedAtByTimeframe = null;
                         asset.strategyRsi = null;
                         asset.strategyIndicators = null;
@@ -420,8 +426,10 @@
         function applyTimeframeData(asset, timeframe) {
             const barsKey = String(timeframe);
             asset.strategyRsi = asset.rsiByTimeframe?.[barsKey] ?? null;
+            asset.previousStrategyRsi = asset.previousRsiByTimeframe?.[barsKey] ?? null;
             asset.strategyIndicators = asset.strategyIndicatorsByTimeframe?.[barsKey] ?? null;
             asset.candleClose = asset.candleCloseByTimeframe?.[barsKey] ?? null;
+            asset.candleOpen = asset.candleOpenByTimeframe?.[barsKey] ?? null;
             asset.candleClosedAt = asset.candleClosedAtByTimeframe?.[barsKey] ?? null;
             asset.atr = asset.atrByTimeframe?.[barsKey] ?? null;
             asset.marketDiagnostics = asset.marketDiagnosticsByTimeframe?.[barsKey] ?? null;
@@ -848,6 +856,23 @@
                 return active;
             }
 
+            const trendTimeframeVotes = ['15', '30', '45'].map(timeframe =>
+                getTrendDirection(
+                    asset.strategyIndicatorsByTimeframe?.[timeframe],
+                    asset.rsiByTimeframe?.[timeframe]
+                )
+            );
+            const alignedTrendTimeframes = trendTimeframeVotes.filter(direction => direction === active.raw).length;
+            if (alignedTrendTimeframes < 2) {
+                return createStrategySignal(
+                    'HOLD',
+                    `WAITING FOR ${active.raw} MULTI-TIMEFRAME TREND`,
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    `${active.reason} Only ${alignedTrendTimeframes}/3 trend timeframes agree; at least two of the 15m, 30m, and 45m trends must align before entry.`,
+                    'LOW'
+                );
+            }
+
             const regimeDirection = getTrendDirection(
                 asset.strategyIndicatorsByTimeframe?.['45'],
                 asset.rsiByTimeframe?.['45']
@@ -901,12 +926,13 @@
             }
 
             const confidence = alignedTimeframes > 0 &&
+                alignedTrendTimeframes === 3 &&
                 Math.abs(strategyScore) >= 0.5 &&
                 sourceVerification.status === 'verified' &&
                 diagnostics.volumeAvailable
                 ? 'HIGH'
                 : 'MEDIUM';
-            const label = confidence === 'HIGH' ? 'HIGH-PROBABILITY' : 'CAUTIONARY';
+            const label = confidence === 'HIGH' ? 'HIGH-CONFLUENCE' : 'CAUTIONARY';
             return createStrategySignal(
                 active.raw,
                 `${label} ${active.raw}`,
@@ -937,8 +963,10 @@
             return {
                 ...asset,
                 strategyRsi: asset.rsiByTimeframe?.[key] ?? null,
+                previousStrategyRsi: asset.previousRsiByTimeframe?.[key] ?? null,
                 strategyIndicators: asset.strategyIndicatorsByTimeframe?.[key] ?? null,
                 candleClose: asset.candleCloseByTimeframe?.[key] ?? null,
+                candleOpen: asset.candleOpenByTimeframe?.[key] ?? null,
                 atr: asset.atrByTimeframe?.[key] ?? null
             };
         }
@@ -1054,7 +1082,7 @@
             const direction = action === 'BUY' ? 'bullish' : 'bearish';
             return createStrategySignal(
                 action,
-                `${confidence === 'HIGH' ? 'HIGH-PROBABILITY' : 'CAUTIONARY'} ${action} THE ${direction.toUpperCase()} TREND (${entryTimeframe}m entry / 45m regime)`,
+                `${confidence === 'HIGH' ? 'HIGH-CONFLUENCE' : 'CAUTIONARY'} ${action} THE ${direction.toUpperCase()} TREND (${entryTimeframe}m entry / 45m regime)`,
                 style,
                 `${direction[0].toUpperCase()}${direction.slice(1)} direction confirmed by at least two of EMA9/EMA21, MACD, and RSI across the 45m regime and ${entryTimeframe}m entry; the required multi-timeframe alignment is met.`,
                 confidence
@@ -1072,6 +1100,20 @@
                     'WAITING FOR DIRECTIONAL TREND',
                     'bg-slate-800 text-slate-300 border-slate-700',
                     'At least two of the 45m EMA9/EMA21, MACD, and RSI checks must agree; wait for direction before checking entry and RSI confluence.',
+                    'LOW'
+                );
+            }
+
+            const confirmationDirection = getTrendDirection(
+                asset.strategyIndicatorsByTimeframe?.['30'],
+                asset.rsiByTimeframe?.['30']
+            );
+            if (confirmationDirection !== regimeDirection) {
+                return createStrategySignal(
+                    'HOLD',
+                    `WAITING FOR 30m ${regimeDirection} CONFIRMATION`,
+                    'bg-slate-800 text-slate-300 border-slate-700',
+                    `The 45m ${regimeDirection === 'BUY' ? 'bullish' : 'bearish'} regime is not confirmed by the 30m trend yet.`,
                     'LOW'
                 );
             }
@@ -1095,7 +1137,7 @@
                     'HOLD',
                     `WAITING FOR ${regimeDirection} RSI PULLBACK`,
                     'bg-slate-800 text-slate-300 border-slate-700',
-                    `The trend entry is aligned, but 15m and 30m RSI have not confirmed a ${regimeDirection === 'BUY' ? 'bullish pullback (RSI ≤30 and ≤38)' : 'bearish pullback (RSI ≥70 and ≥62)'}.`,
+                    `The 30m/45m trend and entry agree, but 15m/30m RSI have not confirmed a ${regimeDirection === 'BUY' ? 'recovering oversold pullback (RSI ≤30 and ≤38)' : 'falling overbought pullback (RSI ≥70 and ≥62)'}.`,
                     'LOW'
                 );
             }
@@ -1165,6 +1207,7 @@
             }
 
             const pullbackRsi = asset.rsiByTimeframe?.['15'];
+            const previousPullbackRsi = asset.previousRsiByTimeframe?.['15'];
             if (!Number.isFinite(pullbackRsi)) {
                 return createStrategySignal(
                     'HOLD',
@@ -1174,16 +1217,16 @@
                     'LOW'
                 );
             }
-            const pullbackConfirmed = regimeDirection === 'BUY'
-                ? pullbackRsi >= 40 && pullbackRsi < 50
-                : pullbackRsi > 50 && pullbackRsi <= 60;
+            const pullbackConfirmed = Number.isFinite(previousPullbackRsi) && (regimeDirection === 'BUY'
+                ? pullbackRsi >= 40 && pullbackRsi < 50 && pullbackRsi > previousPullbackRsi
+                : pullbackRsi > 50 && pullbackRsi <= 60 && pullbackRsi < previousPullbackRsi);
             if (!pullbackConfirmed) {
                 const pullbackRange = regimeDirection === 'BUY' ? '40–<50' : '>50–60';
                 return createStrategySignal(
                     'HOLD',
                     'WAITING FOR 15m RSI RESET',
                     'bg-slate-800 text-slate-300 border-slate-700',
-                    `The ${regimeDirection === 'BUY' ? 'bullish' : 'bearish'} trend and entry are aligned, but 15m RSI ${pullbackRsi.toFixed(1)} is outside the pullback-reset range (${pullbackRange}).`,
+                    `The ${regimeDirection === 'BUY' ? 'bullish' : 'bearish'} trend and entry are aligned, but 15m RSI ${pullbackRsi.toFixed(1)} must be in ${pullbackRange} and ${regimeDirection === 'BUY' ? 'turning up' : 'turning down'} to confirm the pullback.`,
                     'LOW'
                 );
             }
@@ -1214,23 +1257,24 @@
 
         function getRsiSignal(asset, tf) {
             let primaryRsi = asset.rsiByTimeframe?.[tf] ?? asset[`rsi${tf}`];
+            const previousPrimaryRsi = asset.previousRsiByTimeframe?.[tf] ?? asset.previousStrategyRsi;
             let secondaryTimeframe = tf === '30' ? '45' : '30';
             const secondaryRsi = asset.rsiByTimeframe?.[secondaryTimeframe] ?? asset[`rsi${secondaryTimeframe}`];
-            if (!Number.isFinite(primaryRsi) || !Number.isFinite(secondaryRsi)) {
+            if (!Number.isFinite(primaryRsi) || !Number.isFinite(previousPrimaryRsi) || !Number.isFinite(secondaryRsi)) {
                 return createStrategySignal('UNAVAILABLE', 'DATA UNAVAILABLE', 'bg-slate-800 text-slate-400 border-slate-700', 'RSI history is insufficient for the selected timeframes.', 'LOW');
             }
 
-            const isOversoldConfluent = primaryRsi <= 30 && secondaryRsi <= 38;
-            const isOverboughtConfluent = primaryRsi >= 70 && secondaryRsi >= 62;
+            const isOversoldConfluent = primaryRsi <= 30 && secondaryRsi <= 38 && primaryRsi > previousPrimaryRsi;
+            const isOverboughtConfluent = primaryRsi >= 70 && secondaryRsi >= 62 && primaryRsi < previousPrimaryRsi;
             const indicators = asset.strategyIndicators || {};
             const bullishTrend = indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal;
             const bearishTrend = indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal;
             if (isOversoldConfluent) {
-                const reason = `${tf}m RSI ${primaryRsi.toFixed(1)} is oversold (≤30) and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms (≤38); EMA/MACD trend ${bullishTrend ? 'is bullish' : 'does not confirm bullishly'}.`;
+                const reason = `${tf}m RSI ${primaryRsi.toFixed(1)} is oversold and turning up (previous ${previousPrimaryRsi.toFixed(1)}), while ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms (≤38); EMA/MACD trend ${bullishTrend ? 'is bullish' : 'does not confirm bullishly'}.`;
                 return createStrategySignal('BUY', `BULLISH SETUP (${tf}m RSI Confluence)`, 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', reason, 'MEDIUM');
             }
             if (isOverboughtConfluent) {
-                const reason = `${tf}m RSI ${primaryRsi.toFixed(1)} is overbought (≥70) and ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms (≥62); EMA/MACD trend ${bearishTrend ? 'is bearish' : 'does not confirm bearishly'}.`;
+                const reason = `${tf}m RSI ${primaryRsi.toFixed(1)} is overbought and turning down (previous ${previousPrimaryRsi.toFixed(1)}), while ${secondaryTimeframe}m RSI ${secondaryRsi.toFixed(1)} confirms (≥62); EMA/MACD trend ${bearishTrend ? 'is bearish' : 'does not confirm bearishly'}.`;
                 return createStrategySignal('SELL', `BEARISH SETUP (${tf}m RSI Confluence)`, 'bg-rose-500/10 text-rose-400 border-rose-500/30', reason, 'MEDIUM');
             }
             return createStrategySignal('HOLD', `FILTERED HOLD (${tf}m No Confluence)`, 'bg-slate-800 text-slate-300 border-slate-700', `No RSI entry confluence: ${tf}m RSI ${primaryRsi.toFixed(1)} must be ≤30 or ≥70 and ${secondaryTimeframe}m RSI must confirm.`, 'LOW');
@@ -1267,28 +1311,32 @@
             const indicators = asset.strategyIndicators;
             if (!indicators || !Number.isFinite(asset.price) ||
                 !Number.isFinite(asset.strategyRsi) ||
+                !Number.isFinite(asset.previousStrategyRsi) ||
+                !Number.isFinite(asset.candleOpen) ||
                 !Number.isFinite(indicators.lowerBand) ||
                 !Number.isFinite(indicators.upperBand)) {
-                return createStrategySignal('UNAVAILABLE', 'DATA UNAVAILABLE', 'bg-slate-800 text-slate-400 border-slate-700', 'Bollinger Bands or RSI are unavailable.', 'LOW');
+                return createStrategySignal('UNAVAILABLE', 'DATA UNAVAILABLE', 'bg-slate-800 text-slate-400 border-slate-700', 'Bollinger Bands, RSI, or reversal-candle data are unavailable.', 'LOW');
             }
 
-            if (asset.candleClose <= indicators.lowerBand && asset.strategyRsi <= 30) {
+            if (asset.candleClose <= indicators.lowerBand && asset.strategyRsi <= 30 &&
+                asset.strategyRsi > asset.previousStrategyRsi && asset.candleClose > asset.candleOpen) {
                 const macdConfirms = indicators.macd > indicators.macdSignal;
                 const reason = `${tf}m candle close ${asset.candleClose.toFixed(4)} is at/below the lower Bollinger Band ${indicators.lowerBand.toFixed(4)} and RSI is ${asset.strategyRsi.toFixed(1)} (≤30); MACD ${macdConfirms ? 'confirms bullish momentum' : 'does not confirm bullish momentum'}.`;
                 return createStrategySignal('BUY', `LOWER BAND + OVERSOLD (${tf}m)`, 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', reason, macdConfirms ? 'HIGH' : 'MEDIUM');
             }
-            if (asset.candleClose >= indicators.upperBand && asset.strategyRsi >= 70) {
+            if (asset.candleClose >= indicators.upperBand && asset.strategyRsi >= 70 &&
+                asset.strategyRsi < asset.previousStrategyRsi && asset.candleClose < asset.candleOpen) {
                 const macdConfirms = indicators.macd < indicators.macdSignal;
                 const reason = `${tf}m candle close ${asset.candleClose.toFixed(4)} is at/above the upper Bollinger Band ${indicators.upperBand.toFixed(4)} and RSI is ${asset.strategyRsi.toFixed(1)} (≥70); MACD ${macdConfirms ? 'confirms bearish momentum' : 'does not confirm bearish momentum'}.`;
                 return createStrategySignal('SELL', `UPPER BAND + OVERBOUGHT (${tf}m)`, 'bg-rose-500/10 text-rose-400 border-rose-500/30', reason, macdConfirms ? 'HIGH' : 'MEDIUM');
             }
 
-            return createStrategySignal('HOLD', `WAITING FOR BAND + RSI (${tf}m)`, 'bg-slate-800 text-slate-300 border-slate-700', `No lower/upper Bollinger Band touch with a confirming RSI extreme on the ${tf}m timeframe.`, 'LOW');
+            return createStrategySignal('HOLD', `WAITING FOR BAND + RSI REVERSAL (${tf}m)`, 'bg-slate-800 text-slate-300 border-slate-700', `Waiting for an oversold/overbought band touch, RSI to turn back, and a reversal candle on the ${tf}m timeframe.`, 'LOW');
         }
 
         function createStrategySignal(raw, text, style, reason, confidence) {
             const confidenceLabel = confidence === 'HIGH' && ['BUY', 'SELL'].includes(raw)
-                ? 'High-Probability Setup'
+                ? 'High-Confluence Setup'
                 : 'Cautionary Signal';
             return { raw, text, style, reason, confidence, confidenceLabel };
         }

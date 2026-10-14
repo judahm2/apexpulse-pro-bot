@@ -180,7 +180,7 @@ function createAlert(result, timestamp) {
   return {
     action: active.action,
     confidence,
-    label: confidence === 'HIGH' ? 'High-Probability Setup' : 'Cautionary Signal',
+    label: confidence === 'HIGH' ? 'High-Confluence Setup' : 'Cautionary Signal',
     reason: `${active.reason} Regime: ${diagnostics.regime}. Trend score ${compositeScore.toFixed(2)} (threshold 0.65); ${alignedTimeframes}/3 timeframes align.`,
     timestamp,
     market,

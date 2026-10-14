@@ -737,8 +737,16 @@ function createMarketResult(symbol, inputCandles, provider, timeframe, currency)
     30: calculateRSI(candles30.map(candle => candle.close)),
     45: calculateRSI(candles45.map(candle => candle.close))
   };
+  const previousRsiByTimeframe = {
+    15: calculateRSI(candles15.slice(0, -1).map(candle => candle.close)),
+    30: calculateRSI(candles30.slice(0, -1).map(candle => candle.close)),
+    45: calculateRSI(candles45.slice(0, -1).map(candle => candle.close))
+  };
   const candleCloseByTimeframe = Object.fromEntries(
     Object.entries(candlesByTimeframe).map(([minutes, bars]) => [minutes, bars.at(-1)?.close ?? null])
+  );
+  const candleOpenByTimeframe = Object.fromEntries(
+    Object.entries(candlesByTimeframe).map(([minutes, bars]) => [minutes, bars.at(-1)?.open ?? null])
   );
   const candleClosedAtByTimeframe = Object.fromEntries(
     Object.entries(candlesByTimeframe).map(([minutes, bars]) => {
@@ -776,9 +784,11 @@ function createMarketResult(symbol, inputCandles, provider, timeframe, currency)
     rsi30: rsiByTimeframe[30],
     rsi45: rsiByTimeframe[45],
     rsiByTimeframe,
+    previousRsiByTimeframe,
     strategyRsi: rsiByTimeframe[timeframe],
     strategyIndicators: strategyIndicatorsByTimeframe[timeframe],
     strategyIndicatorsByTimeframe,
+    candleOpenByTimeframe,
     recentClosedCandles: selectedCandles.slice(-13).map(candle => ({
       time: (candle.time + (Number(timeframe) * 60)) * 1000,
       open: candle.open,
@@ -866,7 +876,7 @@ function calculateMarketDiagnostics(candles, atr, indicators) {
   };
 }
 
-function backtestStrategies(candles) {
+export function backtestStrategies(candles) {
   const strategies = {
     trendFollowing: { closedTrades: 0, wins: 0, losses: 0, netR: 0 },
     rsi: { closedTrades: 0, wins: 0, losses: 0, netR: 0 },
@@ -874,29 +884,37 @@ function backtestStrategies(candles) {
     bollingerRsi: { closedTrades: 0, wins: 0, losses: 0, netR: 0 }
   };
 
-  for (let index = 35; index < candles.length - 1; index++) {
+  for (let index = 35; index + 12 < candles.length; index++) {
     const history = candles.slice(0, index + 1);
     const closes = history.map(candle => candle.close);
     const rsi = calculateRSI(closes);
+    const previousRsi = calculateRSI(closes.slice(0, -1));
     const indicators = calculateStrategyIndicators(closes);
     const atr = calculateATR(history);
-    if (!indicators || !Number.isFinite(rsi) || !Number.isFinite(atr) || atr <= 0) continue;
+    if (!indicators || !Number.isFinite(rsi) || !Number.isFinite(previousRsi) ||
+        !Number.isFinite(atr) || atr <= 0) continue;
+
+    const bullishVotes = Number(indicators.ema9 > indicators.ema21) +
+      Number(indicators.macd > indicators.macdSignal) +
+      Number(rsi > 50);
+    const bearishVotes = Number(indicators.ema9 < indicators.ema21) +
+      Number(indicators.macd < indicators.macdSignal) +
+      Number(rsi < 50);
+    const trendDirection = bullishVotes >= 2 ? 'BUY' : bearishVotes >= 2 ? 'SELL' : 'HOLD';
 
     const signals = {
-      trendFollowing: indicators.ema9 > indicators.ema21 &&
-        indicators.macd > indicators.macdSignal && rsi > 50
-        ? 1
-        : indicators.ema9 < indicators.ema21 &&
-          indicators.macd < indicators.macdSignal && rsi < 50 ? -1 : 0,
-      rsi: rsi <= 30 ? 1 : rsi >= 70 ? -1 : 0,
+      trendFollowing: trendDirection === 'BUY' ? 1 : trendDirection === 'SELL' ? -1 : 0,
+      rsi: rsi <= 30 && rsi > previousRsi ? 1 : rsi >= 70 && rsi < previousRsi ? -1 : 0,
       emaMacd: indicators.previousEma9 <= indicators.previousEma21 &&
         indicators.ema9 > indicators.ema21 && indicators.macd > indicators.macdSignal
         ? 1
         : indicators.previousEma9 >= indicators.previousEma21 &&
           indicators.ema9 < indicators.ema21 && indicators.macd < indicators.macdSignal ? -1 : 0,
-      bollingerRsi: closes.at(-1) <= indicators.lowerBand && rsi <= 30
+      bollingerRsi: closes.at(-1) <= indicators.lowerBand && rsi <= 30 &&
+        rsi > previousRsi && candles[index].close > candles[index].open
         ? 1
-        : closes.at(-1) >= indicators.upperBand && rsi >= 70 ? -1 : 0
+        : closes.at(-1) >= indicators.upperBand && rsi >= 70 &&
+          rsi < previousRsi && candles[index].close < candles[index].open ? -1 : 0
     };
 
     Object.entries(signals).forEach(([strategy, direction]) => {
@@ -911,7 +929,11 @@ function backtestStrategies(candles) {
         const stopHit = direction > 0 ? candle.low <= stop : candle.high >= stop;
         const targetHit = direction > 0 ? candle.high >= target : candle.low <= target;
         if (stopHit || targetHit) {
-          outcome = targetHit && !stopHit ? 2 : -1;
+          const stopGapFill = direction > 0 ? candle.open < stop : candle.open > stop;
+          const exit = stopHit
+            ? stopGapFill ? candle.open : stop
+            : target;
+          outcome = direction * (exit - entry) / risk;
           break;
         }
       }

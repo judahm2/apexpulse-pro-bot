@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import handler from '../api/market-data.js';
+import handler, { backtestStrategies } from '../api/market-data.js';
 
 function createResponse() {
   return {
@@ -37,6 +37,12 @@ function createCandles() {
     };
   });
 }
+
+test('historical backtests exclude signals without a complete 12-candle outcome window', () => {
+  const candles = createCandles();
+  assert.equal(backtestStrategies(candles.slice(0, 47)).trendFollowing.closedTrades, 0);
+  assert.equal(backtestStrategies(candles.slice(0, 48)).trendFollowing.closedTrades, 1);
+});
 
 function twelveDataResponse(candles) {
   return {
@@ -115,6 +121,9 @@ test('Twelve Data is cross-checked with Finnhub on traditional and crypto assets
       assert.equal(result.sourceVerification.status, 'verified');
       assert.deepEqual(result.marketSources.map(source => source.provider), ['Twelve Data', 'Finnhub']);
       assert.equal(result.rsi15, 100);
+      assert.ok(Number.isFinite(result.previousRsiByTimeframe['15']));
+      assert.equal(result.previousRsiByTimeframe['15'], 100);
+      assert.ok(Number.isFinite(result.candleOpenByTimeframe['15']));
       assert.ok(result.candleClosedAt < Date.now());
     }
     assert.deepEqual(requests.map(url => url.hostname), [
