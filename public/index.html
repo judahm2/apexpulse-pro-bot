@@ -210,6 +210,14 @@
             Alerts use third-party closed-candle data; prices may differ from executable market prices because of provider differences, spreads, and execution. Confirm levels and risk yourself. This dashboard does not calculate position size or place orders.
         </p>
 
+        <section class="rounded-2xl border border-borderCol bg-cardBg p-4 sm:p-6" aria-labelledby="tradeHistoryTitle">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 id="tradeHistoryTitle" class="text-sm font-semibold text-slate-100">Historical bot signal outcomes</h2>
+                <span class="text-[10px] text-slate-500">Scheduled scanner • simulated results</span>
+            </div>
+            <div id="tradeHistorySummary" class="text-xs text-slate-400">Loading rolling outcome summary...</div>
+        </section>
+
         <div class="bg-cardBg border border-borderCol rounded-2xl overflow-hidden shadow-xl">
             <div class="px-4 sm:px-6 py-4 border-b border-borderCol flex items-center justify-between bg-slate-900/50">
                 <div class="flex items-center space-x-2">
@@ -250,6 +258,9 @@
         let tradeAlertAudioContext = null;
         const lastObservedTradeStates = new Map();
         const observedTradeAlertKeys = new Set();
+        const observedHistoryOutcomeIds = new Set();
+        let tradeHistoryInitialized = false;
+        let lastTradeHistoryError = '';
         const autoScanIntervalMs = 60 * 1000;
 
         // Signals and displayed prices use the same 15-minute closed-candle feed.
@@ -676,9 +687,9 @@
                             try {
                                 const direction = upcoming.direction === 'SELL' ? 'SELL / SHORT' : 'BUY';
                                 const notification = new window.Notification(
-                                    `${asset.symbol} ${direction} setup watch`,
+                                    `🟡 ${asset.symbol} ${direction} setup watch`,
                                     {
-                                        body: `${upcoming.reason} Last closed price: ${asset.candleClose} ${asset.currency || ''}.`,
+                                        body: `UPCOMING ${upcoming.direction} SETUP • WATCH\n${asset.symbol} • ${selectedTimeframe}m\n${upcoming.reason}\nLast close: ${asset.candleClose} ${asset.currency || ''}`,
                                         tag: `watch-${key}-${closedAt}`,
                                         renotify: false
                                     }
@@ -706,13 +717,22 @@
             if (signal.raw === 'HOLD') return;
 
             const direction = signal.raw === 'SELL' ? 'SELL / SHORT' : 'BUY';
-            const body = `${signal.confidenceLabel}: ${direction} ${asset.symbol} • ${signal.confidence} confidence. ${signal.reason} Price ${alert.market.price} ${alert.market.currency}. Entry ${plan.entry}, stop ${plan.invalidation}, 2R target ${plan.target}. Position size not calculated; apply account-specific risk limits. ${alert.timestamp}`;
+            const body = [
+                `${signal.confidenceLabel.toUpperCase()} • ${direction} • ${signal.confidence} confidence`,
+                `${asset.symbol} • ${selectedTimeframe}m • ${alert.market.price} ${alert.market.currency}`,
+                `Regime: ${alert.market.regime || 'unknown'} • Feed check: ${alert.market.sourceVerification || 'unavailable'}`,
+                `RSI 15/30/45: ${Object.values(alert.market.indicators).map(value => value ?? '—').join(' / ')}`,
+                `Reason: ${signal.reason}`,
+                `Entry: ${plan.entry} • Stop: ${plan.invalidation} • 2R target: ${plan.target}`,
+                'Position size not calculated; apply account-specific risk limits.'
+            ].join('\n');
 
             logToConsole(JSON.stringify(alert), signal.raw === 'BUY' ? 'success' : 'alert');
             if (!tradeAlertsEnabled) return;
 
             try {
-                const notification = new window.Notification(`${asset.symbol} ${direction} setup`, {
+                const signalColor = signal.raw === 'BUY' ? '🟢' : '🔴';
+                const notification = new window.Notification(`${signalColor} ${asset.symbol} ${direction} setup`, {
                     body,
                     tag: `trade-${key}-${closedAt}`,
                     renotify: false
@@ -737,6 +757,8 @@
                     timeframe: `${selectedTimeframe}m`,
                     price: asset.candleClose,
                     currency: asset.currency,
+                    regime: asset.marketDiagnosticsByTimeframe?.[String(selectedTimeframe)]?.regime,
+                    sourceVerification: asset.sourceVerification?.status,
                     candleClosedAt: closedAt,
                     indicators: {
                         rsi15: formatAlertValue(asset.rsi15),
@@ -1563,8 +1585,83 @@
         function logToConsole(message, type = 'info') {
             const consoleBox = document.getElementById('consoleLogs');
             const time = new Date().toLocaleTimeString();
+
+            let alert;
+            try {
+                alert = JSON.parse(message);
+            } catch {
+                alert = null;
+            }
+            if (alert && typeof alert === 'object' && ['BUY', 'SELL', 'WATCH', 'HOLD'].includes(alert.action)) {
+                const colorClasses = {
+                    BUY: {
+                        border: 'border-emerald-500',
+                        badge: 'bg-emerald-500/15 text-emerald-300'
+                    },
+                    SELL: {
+                        border: 'border-rose-500',
+                        badge: 'bg-rose-500/15 text-rose-300'
+                    },
+                    WATCH: {
+                        border: 'border-amber-500',
+                        badge: 'bg-amber-500/15 text-amber-300'
+                    },
+                    HOLD: {
+                        border: 'border-slate-500',
+                        badge: 'bg-slate-500/15 text-slate-300'
+                    }
+                }[alert.action];
+                const card = document.createElement('article');
+                card.className = `rounded-lg border border-borderCol border-l-4 ${colorClasses.border} bg-slate-950/50 p-3`;
+
+                const header = document.createElement('div');
+                header.className = 'mb-2 flex flex-wrap items-center gap-2';
+                const title = document.createElement('strong');
+                title.className = 'text-sm text-slate-100';
+                title.textContent = `[${time}] ${alert.market?.symbol || 'Market'}${alert.action === 'WATCH' ? ` ${alert.direction || ''}` : ''}`;
+                const badge = document.createElement('span');
+                badge.className = `rounded px-2 py-0.5 text-[10px] font-bold tracking-wide ${colorClasses.badge}`;
+                badge.textContent = `${alert.label || alert.action} • ${alert.confidence || '—'} CONFIDENCE`;
+                header.append(title, badge);
+                card.appendChild(header);
+
+                const addAlertLine = (label, value, className = 'text-slate-300') => {
+                    if (value === null || value === undefined || value === '') return;
+                    const line = document.createElement('p');
+                    line.className = `mt-1 whitespace-normal break-words leading-relaxed ${className}`;
+                    if (label) {
+                        const labelNode = document.createElement('span');
+                        labelNode.className = 'font-semibold text-slate-200';
+                        labelNode.textContent = `${label}: `;
+                        line.appendChild(labelNode);
+                    }
+                    line.appendChild(document.createTextNode(String(value)));
+                    card.appendChild(line);
+                };
+
+                const market = alert.market || {};
+                const indicators = market.indicators || {};
+                const risk = alert.risk || {};
+                addAlertLine('Reason', alert.reason);
+                addAlertLine('Market', `${market.timeframe || '—'} • ${market.price ?? '—'} ${market.currency || ''}`.trim());
+                addAlertLine('Regime / feed', `${market.regime || 'unknown'} • ${market.sourceVerification || 'unavailable'}`);
+                const rsi = [indicators.rsi15, indicators.rsi30, indicators.rsi45]
+                    .map(value => value ?? '—')
+                    .join(' / ');
+                addAlertLine('RSI 15/30/45', rsi);
+                if (alert.risk) {
+                    addAlertLine('Plan', `Entry ${risk.entry ?? '—'} • Stop ${risk.stopLoss ?? '—'} • Target ${risk.takeProfit ?? '—'} (${risk.riskRewardRatio || '2:1'})`);
+                    addAlertLine('Risk note', risk.positionSizingNote || 'Position size not calculated; apply account- and instrument-specific risk limits.');
+                }
+
+                addAlertLine('Time', alert.timestamp);
+                consoleBox.appendChild(card);
+                consoleBox.scrollTop = consoleBox.scrollHeight;
+                return;
+            }
+
             const div = document.createElement('div');
-            
+
             let colorClass = 'text-slate-300';
             if (type === 'success') colorClass = 'text-emerald-400';
             if (type === 'alert') colorClass = 'text-amber-400';
@@ -1574,6 +1671,130 @@
             div.textContent = `[${time}] ${message}`;
             consoleBox.appendChild(div);
             consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
+
+        function renderTradeHistory(history) {
+            const summary = document.getElementById('tradeHistorySummary');
+            summary.replaceChildren();
+            if (!history.available) {
+                summary.textContent = history.reason || 'Trade-history storage is unavailable.';
+                return;
+            }
+
+            const overall = history.overall || {};
+            const metrics = [
+                [`${overall.closedTrades || 0}`, 'closed outcomes'],
+                [overall.winRatePercent === null ? '—' : `${overall.winRatePercent.toFixed(1)}%`, 'win rate'],
+                [overall.averageR === null ? '—' : `${overall.averageR.toFixed(2)}R`, 'average R'],
+                [`${overall.netR.toFixed(2)}R`, 'net R'],
+                [`${overall.pending || 0}`, 'pending']
+            ];
+            const metricGrid = document.createElement('div');
+            metricGrid.className = 'grid grid-cols-2 gap-2 sm:grid-cols-5';
+            metrics.forEach(([value, label]) => {
+                const card = document.createElement('div');
+                card.className = 'rounded-lg border border-borderCol bg-slate-950/50 p-3';
+                const number = document.createElement('strong');
+                number.className = 'block text-lg text-slate-100';
+                number.textContent = value;
+                const caption = document.createElement('span');
+                caption.className = 'text-[11px] text-slate-400';
+                caption.textContent = label;
+                card.append(number, caption);
+                metricGrid.appendChild(card);
+            });
+            summary.appendChild(metricGrid);
+
+            const groups = (history.bySymbol || []).slice(0, 4);
+            const groupText = groups.length
+                ? groups.map(group => `${group.key}: ${group.closedTrades} trades, ${group.winRatePercent.toFixed(0)}% wins, ${group.averageR.toFixed(2)}R avg`).join(' • ')
+                : 'Waiting for the scheduled scanner to close its first signal outcomes.';
+            const bySymbol = document.createElement('p');
+            bySymbol.className = 'mt-3 text-xs leading-relaxed text-slate-300';
+            bySymbol.textContent = `By symbol: ${groupText}`;
+            summary.appendChild(bySymbol);
+
+            const conditionRows = [
+                ['By regime', history.byRegime || []],
+                ['By confidence', history.byConfidence || []],
+                ['By action', history.byAction || []]
+            ];
+            conditionRows.forEach(([label, conditionGroups]) => {
+                if (!conditionGroups.length) return;
+                const row = document.createElement('p');
+                row.className = 'mt-2 text-xs leading-relaxed text-slate-400';
+                row.textContent = `${label}: ${conditionGroups.map(group =>
+                    `${group.key} ${group.closedTrades} trades / ${group.averageR.toFixed(2)}R avg`
+                ).join(' • ')}`;
+                summary.appendChild(row);
+            });
+
+            const recentOutcomes = (history.recentOutcomes || []).slice(0, 5);
+            if (recentOutcomes.length) {
+                const outcomeList = document.createElement('ul');
+                outcomeList.className = 'mt-3 space-y-1 border-t border-borderCol pt-3 text-xs text-slate-300';
+                recentOutcomes.forEach(outcome => {
+                    const item = document.createElement('li');
+                    const sign = outcome.outcomeR > 0 ? '+' : '';
+                    item.textContent = `${outcome.action} ${outcome.symbol} • ${outcome.outcome.replace('_', ' ')} • ${sign}${outcome.outcomeR.toFixed(2)}R • ${outcome.barsElapsed} candles`;
+                    outcomeList.appendChild(item);
+                });
+                summary.appendChild(outcomeList);
+            }
+
+            const note = document.createElement('p');
+            note.className = 'mt-2 text-[11px] text-slate-500';
+            note.textContent = `Rolling sample: up to ${history.capacity} events, Redis key expires after ${history.retentionDays} days. Simulated candle outcomes; same-candle stop/target touches count as stop-outs.`;
+            summary.appendChild(note);
+        }
+
+        async function refreshTradeHistory() {
+            try {
+                const response = await fetch('/api/trade-history');
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.error || `Trade history request failed (HTTP ${response.status}).`);
+                lastTradeHistoryError = '';
+                renderTradeHistory(payload);
+                if (!payload.available) return;
+
+                for (const outcome of payload.recentOutcomes || []) {
+                    if (observedHistoryOutcomeIds.has(outcome.id)) continue;
+                    observedHistoryOutcomeIds.add(outcome.id);
+                    if (!tradeHistoryInitialized || !tradeAlertsEnabled) continue;
+                    const resolvedAt = Date.parse(outcome.resolvedAt);
+                    if (!Number.isFinite(resolvedAt) || Date.now() - resolvedAt > 10 * 60 * 1000) continue;
+                    const direction = outcome.action === 'SELL' ? 'SELL / SHORT' : 'BUY';
+                    const label = outcome.outcome === 'TARGET' ? 'TARGET HIT' : outcome.outcome === 'STOP' ? 'STOP HIT' : 'TIME EXIT';
+                    const sign = outcome.outcomeR > 0 ? '+' : '';
+                    const signalColor = outcome.action === 'BUY' ? '🟢' : '🔴';
+                    const notification = new window.Notification(
+                        `${signalColor} ${outcome.symbol} ${direction} • ${label} (${sign}${outcome.outcomeR.toFixed(2)}R)`,
+                        {
+                            body: [
+                                `Historical ${outcome.timeframe || '15m'} outcome`,
+                                `Entry: ${outcome.entry} • Exit: ${outcome.exitPrice}`,
+                                `After ${outcome.barsElapsed} candles • max favorable: ${outcome.maxFavorableR.toFixed(2)}R • max adverse: ${outcome.maxAdverseR.toFixed(2)}R`
+                            ].join('\n'),
+                            tag: `outcome-${outcome.id}`,
+                            renotify: false
+                        }
+                    );
+                    window.setTimeout(() => notification.close(), 10000);
+                    playTradeAlertSound(outcome.action);
+                }
+                tradeHistoryInitialized = true;
+                while (observedHistoryOutcomeIds.size > 50) {
+                    observedHistoryOutcomeIds.delete(observedHistoryOutcomeIds.values().next().value);
+                }
+            } catch (error) {
+                const message = error.message || 'Historical trade results are temporarily unavailable.';
+                const summary = document.getElementById('tradeHistorySummary');
+                summary.textContent = `Historical outcomes unavailable: ${message}`;
+                if (message !== lastTradeHistoryError) {
+                    logToConsole(message, 'error');
+                    lastTradeHistoryError = message;
+                }
+            }
         }
 
         async function triggerManualScan() {
@@ -1657,6 +1878,11 @@
             updateAutoScanButton();
             updateTradeAlertButton();
             updateThemeButton();
+            refreshTradeHistory();
+            window.setInterval(refreshTradeHistory, 5 * 60 * 1000);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) refreshTradeHistory();
+            });
             if (autoScanEnabled) {
                 updateCustomMarketPrices(true);
                 window.setInterval(() => {

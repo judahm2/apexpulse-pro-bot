@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Redis } from '@upstash/redis';
+import { getSharedRedis as getConfiguredRedis } from '../lib/redis.js';
 
 const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{0,19}$/;
 const BASE_INTERVAL_SECONDS = 15 * 60;
@@ -7,7 +7,6 @@ const TIMEFRAMES = [15, 30, 45];
 const TWELVE_DATA_CACHE_TTL_MS = 60 * 1000;
 const PROVIDER_ERROR_CACHE_TTL_MS = 60 * 1000;
 const twelveDataCache = new Map();
-let sharedRedis;
 let redisConfigurationWarningLogged = false;
 
 export default async function handler(req, res) {
@@ -194,7 +193,7 @@ async function getSharedCachedMarketResult(symbol, timeframe, isCrypto, loadResu
 
   let redis;
   try {
-    redis = getSharedRedis(redisUrl, redisToken);
+    redis = getConfiguredRedis(redisUrl, redisToken);
   } catch (error) {
     console.error('Unable to configure shared market-data cache:', error.message);
     return loadResult();
@@ -257,11 +256,6 @@ async function getSharedCachedMarketResult(symbol, timeframe, isCrypto, loadResu
       console.error('Unable to release shared market-data cache lock:', error.message);
     }
   }
-}
-
-function getSharedRedis(url, token) {
-  if (!sharedRedis) sharedRedis = new Redis({ url, token });
-  return sharedRedis;
 }
 
 function getMarketResultCacheTtlSeconds(result) {
@@ -785,6 +779,13 @@ function createMarketResult(symbol, inputCandles, provider, timeframe, currency)
     strategyRsi: rsiByTimeframe[timeframe],
     strategyIndicators: strategyIndicatorsByTimeframe[timeframe],
     strategyIndicatorsByTimeframe,
+    recentClosedCandles: selectedCandles.slice(-13).map(candle => ({
+      time: (candle.time + (Number(timeframe) * 60)) * 1000,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close
+    })),
     atr: atrByTimeframe[timeframe],
     atrByTimeframe,
     marketDiagnostics: diagnosticsByTimeframe[timeframe],

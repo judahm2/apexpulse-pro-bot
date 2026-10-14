@@ -1,4 +1,6 @@
 import marketDataHandler from './market-data.js';
+import { getSharedRedis } from '../lib/redis.js';
+import { recordTradeHistory } from '../lib/trade-history.js';
 
 export default async function handler(req, res) {
   const authHeader = req.headers.authorization;
@@ -25,6 +27,21 @@ export default async function handler(req, res) {
     const results = marketResponse.body.results;
     const timestamp = new Date().toISOString();
     const alerts = results.map(result => createAlert(result, timestamp));
+    let history;
+    try {
+      const redis = getSharedRedis();
+      if (!redis) {
+        history = {
+          available: false,
+          reason: 'Configure UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to enable rolling trade history.'
+        };
+      } else {
+        history = await recordTradeHistory(alerts, results, redis);
+      }
+    } catch (error) {
+      console.error('Unable to update historical trade results:', error);
+      history = { available: false, reason: 'Historical trade results could not be updated during this scan.' };
+    }
 
     if (process.env.DISCORD_WEBHOOK_URL) {
       for (const content of createDiscordMessages(alerts)) {
@@ -39,7 +56,7 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ success: true, timestamp, alerts, results });
+    return res.status(200).json({ success: true, timestamp, alerts, results, history });
   } catch (error) {
     console.error('Scheduled trading scan failed:', error);
     return res.status(500).json({ error: error.message });
