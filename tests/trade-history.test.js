@@ -68,7 +68,7 @@ test('trade history endpoint reports when Redis is not configured', async () => 
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.available, false);
-  assert.match(response.body.reason, /UPSTASH_REDIS_REST_URL/);
+  assert.equal(Object.hasOwn(response.body, 'reason'), false);
   assert.match(response.headers['Cache-Control'], /s-maxage=60/);
 });
 

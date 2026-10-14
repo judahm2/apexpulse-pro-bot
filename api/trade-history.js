@@ -11,14 +11,11 @@ export default async function handler(req, res) {
   try {
     const redis = getSharedRedis();
     if (!redis) {
-      return res.status(200).json({
-        available: false,
-        reason: 'Configure UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to enable rolling trade history.'
-      });
+      return res.status(200).json({ available: false });
     }
     return res.status(200).json(await readTradeHistory(redis));
   } catch (error) {
     console.error('Unable to read historical trade results:', error);
-    return res.status(503).json({ error: 'Historical trade results are temporarily unavailable.' });
+    return res.status(503).json({ error: 'Historical results are temporarily unavailable. Please try again later.' });
   }
 }

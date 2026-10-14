@@ -1677,7 +1677,7 @@
             const summary = document.getElementById('tradeHistorySummary');
             summary.replaceChildren();
             if (!history.available) {
-                summary.textContent = history.reason || 'Trade-history storage is unavailable.';
+                summary.textContent = 'Historical results are temporarily unavailable. Please try again later.';
                 return;
             }
 
@@ -1742,17 +1742,18 @@
                 summary.appendChild(outcomeList);
             }
 
-            const note = document.createElement('p');
-            note.className = 'mt-2 text-[11px] text-slate-500';
-            note.textContent = `Rolling sample: up to ${history.capacity} events, Redis key expires after ${history.retentionDays} days. Simulated candle outcomes; same-candle stop/target touches count as stop-outs.`;
-            summary.appendChild(note);
         }
 
         async function refreshTradeHistory() {
             try {
                 const response = await fetch('/api/trade-history');
-                const payload = await response.json();
-                if (!response.ok) throw new Error(payload.error || `Trade history request failed (HTTP ${response.status}).`);
+                if (!response.ok) throw new Error('Historical results are temporarily unavailable. Please try again later.');
+                let payload;
+                try {
+                    payload = await response.json();
+                } catch {
+                    throw new Error('Historical results are temporarily unavailable. Please try again later.');
+                }
                 lastTradeHistoryError = '';
                 renderTradeHistory(payload);
                 if (!payload.available) return;
@@ -1787,9 +1788,9 @@
                     observedHistoryOutcomeIds.delete(observedHistoryOutcomeIds.values().next().value);
                 }
             } catch (error) {
-                const message = error.message || 'Historical trade results are temporarily unavailable.';
+                const message = 'Historical results are temporarily unavailable. Please try again later.';
                 const summary = document.getElementById('tradeHistorySummary');
-                summary.textContent = `Historical outcomes unavailable: ${message}`;
+                summary.textContent = message;
                 if (message !== lastTradeHistoryError) {
                     logToConsole(message, 'error');
                     lastTradeHistoryError = message;

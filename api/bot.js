@@ -31,16 +31,13 @@ export default async function handler(req, res) {
     try {
       const redis = getSharedRedis();
       if (!redis) {
-        history = {
-          available: false,
-          reason: 'Configure UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to enable rolling trade history.'
-        };
+        history = { available: false };
       } else {
         history = await recordTradeHistory(alerts, results, redis);
       }
     } catch (error) {
       console.error('Unable to update historical trade results:', error);
-      history = { available: false, reason: 'Historical trade results could not be updated during this scan.' };
+      history = { available: false };
     }
 
     if (process.env.DISCORD_WEBHOOK_URL) {
