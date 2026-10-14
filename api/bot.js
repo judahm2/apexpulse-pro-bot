@@ -116,19 +116,6 @@ function createAlert(result, timestamp) {
     return { action: 'HOLD', confidence: 'LOW', label: 'Cautionary Signal', reason: filterReason, timestamp, market, risk: null };
   }
   if (!['BUY', 'SELL'].includes(active.action)) {
-    const upcoming = getUpcomingTrendSignal(result);
-    if (upcoming) {
-      return {
-        action: 'WATCH',
-        direction: upcoming.direction,
-        confidence: 'MEDIUM',
-        label: 'Upcoming Setup Watch',
-        reason: upcoming.reason,
-        timestamp,
-        market,
-        risk: null
-      };
-    }
     return {
       action: 'HOLD',
       confidence: 'LOW',
@@ -282,37 +269,6 @@ function getTrendFollowingSignal(result) {
   };
 }
 
-export function getUpcomingTrendSignal(result) {
-  const direction = getTrendDirection(
-    result.strategyIndicatorsByTimeframe?.['45'],
-    result.rsiByTimeframe?.['45']
-  );
-  if (!['BUY', 'SELL'].includes(direction)) return null;
-
-  const indicators = result.strategyIndicatorsByTimeframe?.['15'];
-  const atr = result.atrByTimeframe?.['15'];
-  if (!indicators ||
-      ![indicators.ema9, indicators.ema21, indicators.previousEma9, indicators.previousEma21,
-        indicators.macd, indicators.macdSignal, indicators.previousMacd, indicators.previousMacdSignal].every(Number.isFinite) ||
-      !Number.isFinite(atr) ||
-      atr <= 0) return null;
-
-  const emaGap = indicators.ema9 - indicators.ema21;
-  const previousEmaGap = indicators.previousEma9 - indicators.previousEma21;
-  const macdGap = indicators.macd - indicators.macdSignal;
-  const previousMacdGap = indicators.previousMacd - indicators.previousMacdSignal;
-  const emaConverging = Math.abs(emaGap) <= atr * 0.5 &&
-    (direction === 'BUY' ? emaGap < 0 && emaGap > previousEmaGap : emaGap > 0 && emaGap < previousEmaGap);
-  const macdConverging = Math.abs(macdGap) <= atr * 0.25 &&
-    (direction === 'BUY' ? macdGap < 0 && macdGap > previousMacdGap : macdGap > 0 && macdGap < previousMacdGap);
-  if (!emaConverging && !macdConverging) return null;
-
-  return {
-    direction,
-    reason: `${direction === 'BUY' ? 'Bullish' : 'Bearish'} 45m trend is confirmed and 15m ${emaConverging ? 'EMA9/EMA21' : 'MACD/signal'} lines are converging toward a possible entry. This is an early WATCH, not a trade signal; wait for full confirmation.`
-  };
-}
-
 function createRiskPlan(result, action) {
   const entry = result.candleClose;
   const atr = result.atr;
@@ -358,17 +314,16 @@ function formatDiscordAlert(alert) {
   const verification = alert.market?.sourceVerification || {};
   const indicators = alert.market?.indicators || {};
   const indicatorLine = `RSI 15/30/45 ${indicators.rsi15 ?? '—'}/${indicators.rsi30 ?? '—'}/${indicators.rsi45 ?? '—'} • EMA9 ${indicators.ema9 ?? '—'} • EMA21 ${indicators.ema21 ?? '—'} • MACD ${indicators.macd ?? '—'}/${indicators.macdSignal ?? '—'} • ATR ${indicators.atr ?? '—'}`;
-  const actionLabel = alert.action === 'WATCH' ? `${alert.direction} WATCH` : alert.action;
-  return `**${alert.label} • ${actionLabel} • ${alert.confidence}**\n${alert.market?.symbol || 'Market'} • ${alert.reason}\n${marketLine}\n${indicatorLine}\nSources: ${sources} • feed check ${verification.status || 'unavailable'}${verification.reason ? `: ${verification.reason}` : ''}\n${riskLine}\n${alert.timestamp}`;
+  return `**${alert.label} • ${alert.action} • ${alert.confidence}**\n${alert.market?.symbol || 'Market'} • ${alert.reason}\n${marketLine}\n${indicatorLine}\nSources: ${sources} • feed check ${verification.status || 'unavailable'}${verification.reason ? `: ${verification.reason}` : ''}\n${riskLine}\n${alert.timestamp}`;
 }
 
-function createDiscordMessages(alerts) {
+export function createDiscordMessages(alerts) {
   const messages = [];
   const now = Date.now();
   const reportableAlerts = alerts.filter(alert => {
     const candleClosedAt = Date.parse(alert.market?.candleClosedAt);
     const candleAge = now - candleClosedAt;
-    return ['BUY', 'SELL', 'WATCH'].includes(alert.action) &&
+    return ['BUY', 'SELL'].includes(alert.action) &&
       Number.isFinite(candleClosedAt) &&
       candleAge >= 0 &&
       candleAge <= (5 * 60 * 1000);
